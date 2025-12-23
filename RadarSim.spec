@@ -8,14 +8,25 @@ block_cipher = None
 
 # Collect data files for critical dependencies
 datas = []
-# Manual data collection to avoid overcomplicating the CI environment
-if os.path.exists('src'):
-    datas += collect_data_files('src')
-if os.path.exists('scenarios'):
-    datas.append(('scenarios', 'scenarios'))
+
+# Collect sklearn data files if available
+try:
+    datas += collect_data_files('sklearn')
+except Exception:
+    pass
+
+# Manual data collection for project assets
+project_assets = ['scenarios', 'resources', 'models', 'data']
+for asset in project_assets:
+    if os.path.exists(asset):
+        datas.append((asset, asset))
+
+# Add src files manually to be absolutely sure, although Analysis usually does this
+# But here we only add non-python files if they ever exist. 
+# Based on find_by_name, there are none currently.
 
 a = Analysis(
-    ['src/main.py'],
+    ['run_gui.py'],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -40,6 +51,7 @@ a = Analysis(
         'sklearn.neighbors.typedefs',
         'sklearn.neighbors.quad_tree',
         'sklearn.tree._utils',
+        'src',
     ],
     hookspath=[],
     hooksconfig={},
