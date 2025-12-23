@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 from .lpi_radar import AdvancedLPIRadar
 from .sar_isar import AdvancedSARISAR
