@@ -125,5 +125,5 @@ jobs:
         test -f LICENSE
         test -f CONTRIBUTING.md
         test -f CHANGELOG.md
-        test -f docs/scientific_methodology.md
+        test -f docs/SCIENTIFIC_METHODOLOGY.md
         echo "All documentation files present!"
