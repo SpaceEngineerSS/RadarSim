@@ -1,0 +1,92 @@
+# Mountain Ambush Scenario
+# 
+# Tests terrain masking physics: A fighter jet hides behind mountains,
+# then performs a pop-up attack. Target should disappear when behind
+# terrain and reappear when it pops up.
+#
+# Scenario Type: Air Defense Training
+# Required Radar: Surveillance (S-Band)
+
+name: "Mountain Ambush - Terrain Masking Test"
+description: |
+  A hostile fighter jet uses mountain terrain for concealment.
+  The target approaches at low altitude behind a mountain range,
+  then performs a pop-up maneuver to attack.
+  
+  Physics Test:
+  - Target masked by terrain = SNR drops to 0 = No detection
+  - Target pops up = Line-of-sight restored = Detection
+
+required_radar_preset: "Surveillance (S-Band)"
+
+# Terrain Configuration (Note: terrain support is in the new physics module)
+terrain:
+  enabled: true
+  seed: 54321
+  scale: 25000.0
+  max_height: 2000.0
+
+# Radar Configuration
+radar:
+  name: "Ground Radar"
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 100  # 100m altitude (ground-based)
+  frequency_hz: 3.0e9    # S-band
+  power_watts: 500000    # 500 kW
+  antenna_gain_db: 35.0
+  beamwidth_az_deg: 2.0
+  beamwidth_el_deg: 3.0
+  prf_hz: 1000
+  pulse_width_s: 1.0e-6
+  noise_figure_db: 4.0
+
+# Target: Low-flying ambush fighter with pop-up maneuver
+targets:
+  - name: "BANDIT-1 (Ambush)"
+    type: "fighter"
+    rcs_m2: 5.0
+    swerling_model: 1
+    
+    # Initial position: Behind the mountains (masked)
+    initial_position:
+      x_m: 70000  # 70km E
+      y_m: 80000  # 80km N
+      z_m: 300    # 300m altitude (LOW - behind terrain!)
+    
+    velocity:
+      vx_mps: -150  # Approaching radar
+      vy_mps: -100
+      vz_mps: 0
+    
+    has_ecm: false
+
+  # Decoy target at high altitude (always visible)
+  - name: "SKYWATCH-1 (Patrol)"
+    type: "fighter"
+    rcs_m2: 8.0
+    swerling_model: 1
+    
+    initial_position:
+      x_m: 80000  # 80 km East
+      y_m: 30000  # 30 km North
+      z_m: 8000   # 8 km altitude (HIGH - always visible)
+    
+    velocity:
+      vx_mps: -150
+      vy_mps: 100
+      vz_mps: 0
+    
+    has_ecm: false
+
+# Simulation Settings
+simulation:
+  duration_s: 180  # 3 minutes
+  update_rate_hz: 20  # 20 Hz
+
+# Environment
+environment:
+  temperature_c: 15.0
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 7.5

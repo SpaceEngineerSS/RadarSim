@@ -1,0 +1,3 @@
+# This directory contains trained ML model artifacts
+# - radar_classifier.pkl: RandomForest classifier
+# - feature_scaler.pkl: StandardScaler for feature normalization

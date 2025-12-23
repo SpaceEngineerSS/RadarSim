@@ -1,0 +1,148 @@
+# Ground Clutter Filtering Demonstration
+# RadarSim Example Configuration
+#
+# This scenario demonstrates CFAR-based ground clutter suppression
+# using different terrain types and filtering algorithms.
+
+scenario:
+  name: "Ground Clutter Filtering Demo"
+  description: "Demonstration of CFAR clutter rejection in various terrain"
+  duration_seconds: 60
+  update_rate_hz: 30
+
+# Ground-based surveillance radar
+radar:
+  name: "AN_TPS_77"
+  type: "pulsed"
+  frequency_hz: 1.3e9  # L-band
+  power_watts: 500000  # 500 kW peak
+  antenna:
+    gain_db: 38
+    beamwidth_az_deg: 2.4
+    beamwidth_el_deg: 3.5
+    weighting: "chebyshev"
+    sidelobe_db: -35
+    scan_rate_deg_s: 36  # 10 second rotation
+  receiver:
+    noise_figure_db: 3.5
+    bandwidth_hz: 1.0e6
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 30  # Tower-mounted
+  prf_hz: 300
+  pulse_width_s: 100.0e-6
+
+# Targets (low-flying aircraft in clutter)
+targets:
+  - name: "Low_Flyer_1"
+    type: "aircraft"
+    rcs_m2: 8.0
+    swerling_model: 1
+    initial_position:
+      x_m: 25000
+      y_m: 15000
+      z_m: 150  # Very low altitude
+    velocity:
+      vx_mps: -80
+      vy_mps: -40
+      vz_mps: 0
+    has_ecm: false
+    
+  - name: "Low_Flyer_2"
+    type: "helicopter"
+    rcs_m2: 4.0
+    swerling_model: 2  # Fast fluctuation due to blades
+    initial_position:
+      x_m: -20000
+      y_m: 30000
+      z_m: 50  # NOE flight
+    velocity:
+      vx_mps: 60
+      vy_mps: -30
+      vz_mps: 2
+    has_ecm: false
+
+  - name: "High_Flyer"
+    type: "aircraft"
+    rcs_m2: 10.0
+    swerling_model: 1
+    initial_position:
+      x_m: 40000
+      y_m: -20000
+      z_m: 8000  # High altitude (clear of clutter)
+    velocity:
+      vx_mps: 250
+      vy_mps: 100
+      vz_mps: 0
+    has_ecm: false
+
+# Clutter configuration
+clutter:
+  # Sector 1: Urban (high clutter)
+  urban_sector:
+    azimuth_start_deg: 45
+    azimuth_end_deg: 90
+    range_start_km: 5
+    range_end_km: 25
+    terrain_type: "urban"
+    sigma0_adjustment_db: 0
+    
+  # Sector 2: Rural (moderate clutter)
+  rural_sector:
+    azimuth_start_deg: 135
+    azimuth_end_deg: 225
+    range_start_km: 0
+    range_end_km: 50
+    terrain_type: "rural"
+    sigma0_adjustment_db: 0
+    
+  # Sector 3: Forest (dense clutter)
+  forest_sector:
+    azimuth_start_deg: 270
+    azimuth_end_deg: 315
+    range_start_km: 10
+    range_end_km: 40
+    terrain_type: "forest"
+    sigma0_adjustment_db: 3
+
+  # Clutter model parameters
+  model:
+    distribution: "weibull"
+    shape_parameter: 2.0  # Weibull shape (k)
+
+# Environment
+environment:
+  temperature_c: 20
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 10.0
+  rain_rate_mmhr: 0  # Clear weather
+
+# CFAR comparison modes (run sequentially)
+cfar_comparison:
+  - type: "CA"
+    name: "Cell Averaging CFAR"
+    guard_cells: 3
+    reference_cells: 24
+    pfa: 1.0e-6
+    
+  - type: "GO"
+    name: "Greatest-Of CFAR"
+    guard_cells: 3
+    reference_cells: 12
+    pfa: 1.0e-6
+    
+  - type: "SO"
+    name: "Smallest-Of CFAR"
+    guard_cells: 3
+    reference_cells: 12
+    pfa: 1.0e-6
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: true
+  show_clutter_map: true
+  show_cfar_threshold: true
+  log_detections: true
+  output_format: "hdf5"

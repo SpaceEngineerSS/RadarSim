@@ -1,0 +1,79 @@
+# Hypersonic Interception Scenario
+# RadarSim Scientific Edge Case
+#
+# Purpose: Test Doppler processing at extreme speeds (Mach 9+)
+# Challenge: Hypersonic Glide Vehicle at 3000 m/s causing Doppler aliasing
+#
+# Scientific Note: At Ka-Band (35 GHz):
+#   Doppler shift = 2 * v / λ = 2 * 3000 / 0.0086 = 700 kHz
+#   This may exceed PRF and cause velocity ambiguity
+# Reference: Hypersonic threat analysis, MDA documents
+
+scenario:
+  name: "Hypersonic Interception"
+  description: "Mach 9 HGV testing Ka-Band missile seeker Doppler limits"
+  duration_seconds: 60
+  update_rate_hz: 30
+  required_radar_preset: "Missile Seeker (Ka-Band)"
+
+# Missile seeker radar (terminal guidance)
+# Reference: AIM-120 AMRAAM, SM-6 seeker characteristics
+radar:
+  name: "Missile_Seeker_KaBand"
+  type: "pulse_doppler"
+  frequency_hz: 35.0e9  # Ka-Band (35 GHz) - extreme Doppler sensitivity
+  power_watts: 1000     # 1 kW (compact seeker)
+  antenna:
+    gain_db: 45         # Very narrow beam (high gain)
+    beamwidth_az_deg: 0.5
+    beamwidth_el_deg: 0.5
+    sidelobe_db: -30
+  receiver:
+    noise_figure_db: 5.0
+    bandwidth_hz: 20.0e6  # Wide bandwidth for fast targets
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 20000          # Interceptor at 20km altitude
+  prf_hz: 100000        # 100 kHz PRF needed for unambiguous Doppler
+  pulse_width_s: 0.5e-6
+
+# Hypersonic Glide Vehicle target
+targets:
+  - name: "HGV_Avangard"
+    type: "missile"
+    rcs_m2: 0.5         # Moderate RCS (glide body)
+    swerling_model: 3   # Slow fluctuation, chi-squared
+    initial_position:
+      x_m: 50000        # 50 km
+      y_m: 0
+      z_m: 40000        # 40 km altitude (descending)
+    velocity:
+      vx_mps: -2800     # Primary component toward radar
+      vy_mps: 0
+      vz_mps: -1000     # Descending at ~Mach 3 equivalent
+    has_ecm: false
+
+# Physics calculations for this scenario:
+#   λ = c/f = 3e8 / 35e9 = 0.00857 m (8.57 mm)
+#   Doppler = 2 * 2800 / 0.00857 = 653,000 Hz (653 kHz)
+#   
+#   With PRF = 100 kHz:
+#     Unambiguous velocity = λ * PRF / 4 = 214 m/s
+#     Target velocity 2800 m/s will alias!
+#
+#   This scenario tests how the radar handles velocity ambiguity.
+
+# Environment (high altitude)
+environment:
+  temperature_c: -60
+  pressure_hpa: 5       # Near-vacuum at 40km
+  water_vapor_gpm3: 0.0
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-5           # Higher false alarm acceptable for terminal phase
+  log_detections: true
+  log_doppler: true     # Critical for this test

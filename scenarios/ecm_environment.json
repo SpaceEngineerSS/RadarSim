@@ -1,0 +1,74 @@
+{
+    "name": "ECM Environment",
+    "description": "Hostile ECM environment with jamming and decoys",
+    "version": "1.0",
+    "radar": {
+        "frequency_ghz": 10.0,
+        "power_watts": 2000,
+        "antenna_gain_db": 35,
+        "prf_hz": 2000,
+        "beamwidth_deg": 1.2
+    },
+    "environment": {
+        "terrain_type": "sea_calm",
+        "weather": "clear",
+        "sea_state": 2
+    },
+    "targets": [
+        {
+            "id": 1,
+            "type": "bomber",
+            "initial_position": [
+                45000,
+                0,
+                10000
+            ],
+            "velocity": [
+                -180,
+                0,
+                -5
+            ],
+            "rcs": 25.0,
+            "swerling_model": 1,
+            "has_ecm": true
+        },
+        {
+            "id": 2,
+            "type": "fighter",
+            "initial_position": [
+                40000,
+                15000,
+                7000
+            ],
+            "velocity": [
+                -220,
+                -80,
+                0
+            ],
+            "rcs": 3.0,
+            "swerling_model": 3
+        }
+    ],
+    "ecm": {
+        "enabled": true,
+        "jammer_power_watts": 500,
+        "techniques": [
+            "noise_jamming",
+            "drfm",
+            "rgpo",
+            "chaff"
+        ],
+        "activation_time_seconds": 20,
+        "chaff_deploy_interval_seconds": 15
+    },
+    "eccm": {
+        "frequency_hopping": true,
+        "prf_jitter": true,
+        "sidelobe_blanking": true,
+        "cfar_enabled": true
+    },
+    "simulation": {
+        "duration_seconds": 180,
+        "time_step": 0.1
+    }
+}

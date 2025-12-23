@@ -1,0 +1,74 @@
+{
+    "name": "Basic Tracking",
+    "description": "Simple scenario with 3 targets approaching from different directions",
+    "version": "1.0",
+    "radar": {
+        "frequency_ghz": 10.0,
+        "power_watts": 1000,
+        "antenna_gain_db": 30,
+        "prf_hz": 1000,
+        "beamwidth_deg": 1.7
+    },
+    "environment": {
+        "terrain_type": "rural",
+        "weather": "clear",
+        "sea_state": 0
+    },
+    "targets": [
+        {
+            "id": 1,
+            "type": "aircraft",
+            "initial_position": [
+                40000,
+                10000,
+                8000
+            ],
+            "velocity": [
+                -200,
+                -50,
+                -10
+            ],
+            "rcs": 15.0,
+            "swerling_model": 1
+        },
+        {
+            "id": 2,
+            "type": "fighter",
+            "initial_position": [
+                -30000,
+                25000,
+                5000
+            ],
+            "velocity": [
+                180,
+                -120,
+                5
+            ],
+            "rcs": 5.0,
+            "swerling_model": 3
+        },
+        {
+            "id": 3,
+            "type": "cruise_missile",
+            "initial_position": [
+                35000,
+                -20000,
+                100
+            ],
+            "velocity": [
+                -250,
+                80,
+                0
+            ],
+            "rcs": 0.5,
+            "swerling_model": 1
+        }
+    ],
+    "ecm": {
+        "enabled": false
+    },
+    "simulation": {
+        "duration_seconds": 120,
+        "time_step": 0.1
+    }
+}

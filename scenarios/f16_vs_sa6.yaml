@@ -1,0 +1,106 @@
+# F-16 vs SA-6 Air Defense Scenario
+# RadarSim Example Configuration
+# 
+# This scenario simulates an F-16 aircraft approaching an SA-6 (2K12 Kub)
+# surface-to-air missile system with electronic countermeasures.
+
+scenario:
+  name: "F-16 vs SA-6 Air Defense"
+  description: "A modern fighter aircraft penetrating SA-6 SAM coverage with ECM support"
+  duration_seconds: 180
+  update_rate_hz: 30
+
+# Radar system (Upgraded professional air defense radar)
+radar:
+  name: "Long_Range_Search_Radar"
+  type: "pulsed_doppler"
+  frequency_hz: 3.0e9  # S-band (3 GHz) - better for long range
+  power_watts: 500000  # 500 kW peak (increased from 200kW)
+  antenna:
+    gain_db: 42        # 42 dB - professional phased array (increased from 34)
+    beamwidth_az_deg: 1.2
+    beamwidth_el_deg: 1.8
+    weighting: "taylor"
+    sidelobe_db: -25
+  receiver:
+    noise_figure_db: 3.0  # Improved receiver (lowered from 5.0)
+    bandwidth_hz: 100e6
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 10  # Ground-based
+  prf_hz: 2000
+  pulse_width_s: 2.0e-6
+
+# Targets
+targets:
+  - name: "F-16_Alpha"
+    type: "fighter"
+    rcs_m2: 2.0  # Reduced RCS with stores
+    swerling_model: 1
+    initial_position:
+      x_m: -80000  # 80 km out
+      y_m: 10000
+      z_m: 5000  # 5 km altitude
+    velocity:
+      vx_mps: 350  # ~Mach 1.0
+      vy_mps: -50
+      vz_mps: -10  # Slight descent
+    has_ecm: true
+    ecm_type: "noise_jamming"
+    ecm_power_watts: 200
+    
+  - name: "F-16_Bravo"
+    type: "fighter"
+    rcs_m2: 2.5
+    swerling_model: 1
+    initial_position:
+      x_m: -75000
+      y_m: -5000
+      z_m: 6000
+    velocity:
+      vx_mps: 340
+      vy_mps: 70
+      vz_mps: 0
+    has_ecm: false
+
+# Electronic Countermeasures
+ecm:
+  chaff_clouds:
+    - deploy_time_s: 60
+      position:
+        x_m: -40000
+        y_m: 5000
+        z_m: 4500
+      rcs_m2: 50
+      dispersion_rate_mps: 5
+      
+  decoys:
+    - name: "ADM-160_MALD"
+      deploy_time_s: 30
+      initial_position:
+        x_m: -60000
+        y_m: 15000
+        z_m: 4000
+      velocity:
+        vx_mps: 300
+        vy_mps: -30
+        vz_mps: -5
+      rcs_m2: 5.0  # Enhanced signature
+
+# Environment
+environment:
+  temperature_c: 15
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 7.5
+  sea_state: 0  # Not applicable (land)
+  terrain_type: "rural"
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: true
+  cfar_type: "CA"
+  cfar_guard_cells: 2
+  cfar_reference_cells: 16
+  pfa: 1.0e-6

@@ -1,0 +1,95 @@
+# RadarSim - Screenshots Needed
+
+To complete the README.md documentation, please capture the following screenshots.
+Save them to `docs/images/` with the filenames specified.
+
+---
+
+## Required Screenshots
+
+### 1. PPI Scope (Main View)
+**Filename:** `ppi_scope.png`
+**Instructions:**
+1. Run `python run_gui.py`
+2. Load `scenarios/air_defense.yaml`
+3. Start simulation
+4. Wait for targets to appear
+5. Capture the PPI scope with sweep line and targets visible
+
+### 2. PPI with Clutter Enabled
+**Filename:** `ppi_clutter.png`
+**Instructions:**
+1. Enable clutter: Advanced → Enable Clutter
+2. Capture the PPI showing degraded SNR
+
+### 3. 3D Tactical Map
+**Filename:** `3d_tactical.png`
+**Instructions:**
+1. Switch to 3D TACTICAL tab
+2. Rotate view to show terrain and targets
+3. Capture with multiple targets visible
+
+### 4. B-Scope with ECM Strobe
+**Filename:** `b_scope_ecm.png`
+**Instructions:**
+1. Load scenario with jammer target
+2. View B-Scope tab
+3. Capture showing yellow ECM strobe bar
+
+### 5. A-Scope with CFAR Hover
+**Filename:** `a_scope_cfar.png`
+**Instructions:**
+1. View A-Scope panel (bottom right)
+2. Hover mouse over the plot
+3. Capture showing CUT (red), Guard (grey), Reference (green) cells
+
+### 6. SAR Viewer
+**Filename:** `sar_viewer.png`
+**Instructions:**
+1. Advanced → Generate SAR Image
+2. Capture the SAR heatmap showing buildings and roads
+
+### 7. ROC Curves
+**Filename:** `roc_curves.png`
+**Instructions:**
+1. View → Show Analysis Window
+2. Go to "ROC Curves" tab
+3. Capture showing multiple SNR curves
+
+### 8. Ambiguity Diagram
+**Filename:** `ambiguity_plot.png`
+**Instructions:**
+1. View → Show Analysis Window
+2. Go to "Ambiguity (PRF)" tab
+3. Capture showing Range/Velocity trade-off
+
+### 9. SNR Histogram
+**Filename:** `snr_histogram.png`
+**Instructions:**
+1. View → Show Analysis Window
+2. Go to "SNR Stats" tab
+3. Run simulation for ~30 seconds
+4. Capture with populated histogram
+
+### 10. RHI Scope
+**Filename:** `rhi_scope.png`
+**Instructions:**
+1. Switch to RHI (Elevation) tab
+2. Capture showing Range vs Height
+
+---
+
+## Optional Screenshots
+
+- `target_inspector.png` - Target details panel with AI classification
+- `control_panel.png` - Radar parameters panel
+- `fullscreen.png` - Full application in F11 mode
+
+---
+
+## Image Guidelines
+
+- **Resolution:** At least 800x600 pixels
+- **Format:** PNG (preferred) or JPG
+- **Theme:** Dark theme (default)
+- **Crop:** Remove window borders if possible

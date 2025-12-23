@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Background -->
+  <circle cx="100" cy="100" r="98" fill="#0a1510" stroke="#00aa55" stroke-width="2"/>
+  
+  <!-- Outer glow -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff66" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#0a1510" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="100" cy="100" r="90" fill="url(#glow)"/>
+  
+  <!-- Radar rings -->
+  <circle cx="100" cy="100" r="75" fill="none" stroke="#00aa55" stroke-width="1" opacity="0.6"/>
+  <circle cx="100" cy="100" r="55" fill="none" stroke="#00aa55" stroke-width="1" opacity="0.5"/>
+  <circle cx="100" cy="100" r="35" fill="none" stroke="#00aa55" stroke-width="1" opacity="0.4"/>
+  <circle cx="100" cy="100" r="15" fill="none" stroke="#00aa55" stroke-width="1" opacity="0.3"/>
+  
+  <!-- Cross hairs -->
+  <line x1="100" y1="20" x2="100" y2="180" stroke="#00aa55" stroke-width="0.5" opacity="0.3"/>
+  <line x1="20" y1="100" x2="180" y2="100" stroke="#00aa55" stroke-width="0.5" opacity="0.3"/>
+  
+  <!-- Sweep line (pointing NE) -->
+  <line x1="100" y1="100" x2="165" y2="35" stroke="#00ff66" stroke-width="3" stroke-linecap="round">
+    <animateTransform attributeName="transform" type="rotate" from="0 100 100" to="360 100 100" dur="4s" repeatCount="indefinite"/>
+  </line>
+  
+  <!-- Center dot -->
+  <circle cx="100" cy="100" r="4" fill="#00ff66"/>
+  
+  <!-- Target blips -->
+  <circle cx="140" cy="60" r="3" fill="#ff4444" opacity="0.8"/>
+  <circle cx="65" cy="130" r="2.5" fill="#00bfff" opacity="0.8"/>
+  <circle cx="130" cy="140" r="2" fill="#ffff00" opacity="0.7"/>
+</svg>

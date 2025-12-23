@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radarsim"
+version = "1.0.0"
+description = "Professional radar seeker simulation with 3D physics, tracking, and ECM"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "RadarSim Contributors"}
+]
+keywords = ["radar", "simulation", "tracking", "ecm", "kalman-filter", "aerospace"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "matplotlib>=3.4.0",
+    "pygame>=2.0.0",
+]
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+]
+all = ["radarsim[gui,dev,docs]"]
+
+[project.urls]
+Homepage = "https://github.com/SpaceEngineerSS/RadarSim"
+Documentation = "https://github.com/SpaceEngineerSS/RadarSim#readme"
+Repository = "https://github.com/SpaceEngineerSS/RadarSim"
+Issues = "https://github.com/SpaceEngineerSS/RadarSim/issues"
+
+[project.scripts]
+radarsim = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "gui*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"

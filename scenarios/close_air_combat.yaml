@@ -1,0 +1,101 @@
+# Close Air Combat (Dogfight) Scenario
+# RadarSim Scientific Edge Case
+#
+# Purpose: Test AESA sector scan agility during high-G maneuvering
+# Challenge: 2 fighters performing evasive maneuvers trying to exit scan volume
+#
+# Scientific Note: Fighter AESA radars scan +/- 60° electronically at 120°/s
+# Targets may exit the scan volume during high-G turns
+# Reference: AN/APG-77, AN/APG-81 performance specifications
+
+scenario:
+  name: "Close Air Combat"
+  description: "Fighter AESA tracking maneuvering targets in sector scan"
+  duration_seconds: 90
+  update_rate_hz: 30
+  required_radar_preset: "Fighter AESA (X-Band)"  # Auto-configure radar on load
+
+# Fighter AESA radar (X-Band)
+# Reference: AN/APG-77 (F-22), AN/APG-81 (F-35)
+radar:
+  name: "Fighter_AESA_APG77"
+  type: "aesa"
+  frequency_hz: 10.0e9  # X-Band
+  power_watts: 20000    # 20 kW
+  antenna:
+    gain_db: 42
+    beamwidth_az_deg: 1.2
+    beamwidth_el_deg: 1.2
+    sidelobe_db: -35
+    scan_type: "sector"
+    sector_az_min_deg: -60
+    sector_az_max_deg: 60
+    scan_speed_deg_s: 120  # Electronic scan speed
+  receiver:
+    noise_figure_db: 3.5
+    bandwidth_hz: 10.0e6
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 8000           # Fighter at 8km altitude (26,000 ft)
+  prf_hz: 10000         # High PRF for air-to-air
+  pulse_width_s: 5.0e-6
+
+# Enemy fighters (performing evasive maneuvers)
+targets:
+  # Bandit 1: Su-57 attempting break turn from 2 o'clock
+  - name: "Su57_Bandit_1"
+    type: "fighter"
+    rcs_m2: 0.5         # Reduced RCS (5th gen)
+    swerling_model: 1
+    initial_position:
+      x_m: 30000        # 30 km
+      y_m: 12000        # 2 o'clock position
+      z_m: 9000         # Slightly above
+    velocity:
+      vx_mps: -250      # Initial closure
+      vy_mps: 150       # Lateral movement (break right)
+      vz_mps: -20       # Slight descent
+    # Note: In real sim, velocity would change during maneuver
+    has_ecm: true
+    ecm_type: "drfm"    # DRFM jammer
+    ecm_power_watts: 200
+
+  # Bandit 2: Su-57 attempting to flank from 10 o'clock
+  - name: "Su57_Bandit_2"
+    type: "fighter"
+    rcs_m2: 0.5
+    swerling_model: 1
+    initial_position:
+      x_m: 25000
+      y_m: -15000       # 10 o'clock position
+      z_m: 7500         # Slightly below
+    velocity:
+      vx_mps: -200
+      vy_mps: -200      # Moving further left (trying to exit scan)
+      vz_mps: 30        # Climbing
+    has_ecm: true
+    ecm_type: "noise_spot"
+    ecm_power_watts: 150
+
+# Analysis notes:
+#   Scan sector: -60° to +60° azimuth
+#   Bandit 1 at ~22° (2 o'clock) - INSIDE sector
+#   Bandit 2 at ~-31° (10 o'clock) - INSIDE sector
+#   
+#   As bandits maneuver, they may exit the +/- 60° coverage
+#   Testing: Will radar detect exit and require gimbal steering?
+
+# Environment
+environment:
+  temperature_c: -30
+  pressure_hpa: 350     # 8km altitude
+  water_vapor_gpm3: 1.0
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-6
+  log_detections: true
+  track_while_scan: true  # AESA capability

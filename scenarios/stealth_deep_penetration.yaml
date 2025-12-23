@@ -1,0 +1,74 @@
+# Stealth Aircraft Deep Penetration Scenario
+# RadarSim Scientific Edge Case
+#
+# Purpose: Test frequency-dependent RCS detection (UHF vs X-Band)
+# Challenge: B-21 Raider with 0.001 m² RCS at X-Band
+#
+# Scientific Note: Lower frequencies (UHF) can detect stealth better
+# because stealth shaping is optimized for higher frequencies.
+# Reference: "Radar Cross Section Reduction" by Knott, Shaeffer, Tuley
+
+scenario:
+  name: "Stealth Deep Penetration"
+  description: "B-21 Raider testing detection limits with UHF early warning radar"
+  duration_seconds: 300
+  update_rate_hz: 30
+  required_radar_preset: "Early Warning (UHF)"
+
+# Early Warning Radar (UHF - optimal for stealth detection)
+# Reference: AN/FPS-117, 76N6 Clam Shell
+radar:
+  name: "Early_Warning_UHF"
+  type: "pulsed"
+  frequency_hz: 0.45e9  # 450 MHz (UHF) - longer wavelength defeats stealth shaping
+  power_watts: 400000   # 400 kW (high power for long range)
+  antenna:
+    gain_db: 32         # Lower gain due to wide beam
+    beamwidth_az_deg: 4.0
+    beamwidth_el_deg: 6.0
+    sidelobe_db: -25
+  receiver:
+    noise_figure_db: 4.0
+    bandwidth_hz: 2.0e6
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 50  # Tower mounted
+  prf_hz: 250          # Low PRF for unambiguous long range
+  pulse_width_s: 200.0e-6  # Long pulse for energy
+
+# Stealth bomber target
+targets:
+  - name: "B-21_Raider"
+    type: "bomber"
+    rcs_m2: 0.001       # Extremely low RCS (1000x smaller than conventional)
+    swerling_model: 1   # Slow fluctuation (large aircraft)
+    initial_position:
+      x_m: -400000      # 400 km out
+      y_m: 50000        # Slight offset
+      z_m: 15000        # High altitude (50,000 ft)
+    velocity:
+      vx_mps: 280       # ~Mach 0.85
+      vy_mps: -20
+      vz_mps: 0
+    has_ecm: true
+    ecm_type: "noise_spot"  # "Smart Noise" - low power, high efficiency
+    ecm_power_watts: 50     # Very low power (stealth requirement)
+
+# Physics comparison note:
+#   At UHF (450 MHz): λ = 0.67m, aircraft dimensions approach resonance
+#   At X-Band (10 GHz): λ = 0.03m, stealth shaping very effective
+#   Expected: UHF detection at ~200km, X-Band might not detect at all
+
+# Environment
+environment:
+  temperature_c: -50    # High altitude cold
+  pressure_hpa: 150     # Low pressure at altitude
+  water_vapor_gpm3: 0.1
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-8          # Very low false alarm for early warning
+  log_detections: true

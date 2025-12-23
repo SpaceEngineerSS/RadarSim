@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "RadarSim: Professional Radar Simulation Engine"
+version: 1.0.0
+date-released: 2025-12-23
+url: "https://github.com/SpaceEngineerSS/RadarSim"
+repository-code: "https://github.com/SpaceEngineerSS/RadarSim"
+license: MIT
+keywords:
+  - radar
+  - simulation
+  - pulse-doppler
+  - ecm
+  - cfar
+  - target-tracking
+  - machine-learning
+authors:
+  - name: "RadarSim Contributors"
+abstract: >-
+  RadarSim is a physics-based radar simulation engine implementing
+  pulse-Doppler processing, CFAR detection, Swerling RCS models,
+  ITU-R P.676 atmospheric attenuation, electronic countermeasures,
+  and AI-powered target classification. Designed for education,
+  research, and professional training applications.

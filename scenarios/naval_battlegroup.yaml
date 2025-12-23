@@ -1,0 +1,129 @@
+# Naval Battlegroup Scenario
+# RadarSim Scientific Edge Case
+#
+# Purpose: Test dynamic range handling (huge vs tiny signals)
+# Challenge: Aircraft carrier (50,000 m²) masking anti-ship missiles (0.1 m²)
+#
+# Scientific Note: Large target reflections can saturate receiver
+# and mask smaller, faster threats. Requires good AGC design.
+# Reference: Naval radar threat assessment scenarios
+
+scenario:
+  name: "Naval Battlegroup Defense"
+  description: "Carrier group vs incoming sea-skimming anti-ship missiles"
+  duration_seconds: 120
+  update_rate_hz: 30
+  required_radar_preset: "Naval Surface (S-Band)"
+
+# Naval surface search radar
+# Reference: AN/SPS-48, AN/SPY-1
+radar:
+  name: "Naval_Surface_SPY1"
+  type: "phased_array"
+  frequency_hz: 3.0e9   # S-Band
+  power_watts: 50000    # 50 kW
+  antenna:
+    gain_db: 40
+    beamwidth_az_deg: 1.5
+    beamwidth_el_deg: 1.5
+    sidelobe_db: -35    # Low sidelobes for clutter rejection
+  receiver:
+    noise_figure_db: 3.0
+    bandwidth_hz: 10.0e6
+    dynamic_range_db: 80  # Critical for this scenario
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 35  # Ship superstructure height
+  prf_hz: 2000
+  pulse_width_s: 10.0e-6
+
+# Targets: 1 Carrier + 4 Anti-Ship Missiles
+targets:
+  # Nimitz-class Aircraft Carrier
+  - name: "CVN_Nimitz"
+    type: "ship"
+    rcs_m2: 50000       # Massive RCS (flight deck, island, aircraft)
+    swerling_model: 0   # Non-fluctuating (huge stable target)
+    initial_position:
+      x_m: 80000        # 80 km
+      y_m: 0
+      z_m: 0            # Waterline
+    velocity:
+      vx_mps: -8        # Closing at 15 knots
+      vy_mps: 0
+      vz_mps: 0
+    has_ecm: false
+
+  # Incoming Anti-Ship Missiles (sea-skimmers)
+  # Challenge: Detect 0.1 m² targets against 50,000 m² carrier return
+  
+  - name: "ASM_1_Brahmos"
+    type: "missile"
+    rcs_m2: 0.1         # Very small, designed for stealth approach
+    swerling_model: 4   # Fast fluctuation (spinning parts)
+    initial_position:
+      x_m: 40000
+      y_m: 2000
+      z_m: 5            # 5m above sea (sea-skimming)
+    velocity:
+      vx_mps: -900      # Mach 2.8 approach
+      vy_mps: 0
+      vz_mps: 0
+    has_ecm: false
+
+  - name: "ASM_2_Brahmos"
+    type: "missile"
+    rcs_m2: 0.1
+    swerling_model: 4
+    initial_position:
+      x_m: 42000
+      y_m: -1500
+      z_m: 5
+    velocity:
+      vx_mps: -900
+      vy_mps: 0
+      vz_mps: 0
+    has_ecm: false
+
+  - name: "ASM_3_Harpoon"
+    type: "missile"
+    rcs_m2: 0.15        # Slightly larger
+    swerling_model: 4
+    initial_position:
+      x_m: 38000
+      y_m: 4000
+      z_m: 8
+    velocity:
+      vx_mps: -280      # Subsonic
+      vy_mps: 0
+      vz_mps: 0
+    has_ecm: true
+    ecm_type: "drfm"    # Terminal DRFM jammer
+    ecm_power_watts: 100
+
+  - name: "ASM_4_Harpoon"
+    type: "missile"
+    rcs_m2: 0.15
+    swerling_model: 4
+    initial_position:
+      x_m: 45000
+      y_m: -3500
+      z_m: 8
+    velocity:
+      vx_mps: -280
+      vy_mps: 0
+      vz_mps: 0
+    has_ecm: false
+
+# Clutter configuration (sea clutter)
+clutter:
+  sea_state: 4          # Moderate sea
+  sigma0_db: -25        # Sea clutter reflectivity
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: true
+  pfa: 1.0e-6
+  log_detections: true

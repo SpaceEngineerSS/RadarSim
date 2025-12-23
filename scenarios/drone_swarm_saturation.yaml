@@ -1,0 +1,230 @@
+# Drone Swarm Saturation Attack Scenario
+# RadarSim Scientific Edge Case
+#
+# Purpose: Test radar handling of high target count with very small RCS
+# Challenge: 30 commercial drones with 0.01 m² RCS saturating detection pipeline
+#
+# Reference: Modern counter-UAS challenges (Houthi drone swarms, etc.)
+
+scenario:
+  name: "Drone Swarm Saturation"
+  description: "30 commercial drones with tiny RCS approaching in wall formation"
+  duration_seconds: 180
+  update_rate_hz: 30
+  required_radar_preset: "Surveillance (S-Band)"
+
+# Ground-based surveillance radar
+radar:
+  name: "Ground_Surveillance_AESA"
+  type: "pulsed_doppler"
+  frequency_hz: 5.5e9  # C-band (optimal for small targets)
+  power_watts: 50000   # 50 kW
+  antenna:
+    gain_db: 38
+    beamwidth_az_deg: 1.8
+    beamwidth_el_deg: 2.5
+    sidelobe_db: -30
+  receiver:
+    noise_figure_db: 3.0
+    bandwidth_hz: 5.0e6
+  position:
+    x_m: 0
+    y_m: 0
+    z_m: 15
+  prf_hz: 3000
+  pulse_width_s: 5.0e-6
+
+# 30 Drone targets in wall formation
+targets:
+  # Row 1 (Front) - 10 drones
+  - name: "Drone_R1_01"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: -450, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_02"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: -350, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_03"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: -250, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_04"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: -150, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_05"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: -50, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_06"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: 50, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_07"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: 150, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_08"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: 250, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_09"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: 350, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R1_10"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15000, y_m: 450, z_m: 100}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+
+  # Row 2 (Middle) - 10 drones, slightly higher
+  - name: "Drone_R2_01"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: -450, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_02"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: -350, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_03"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: -250, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_04"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: -150, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_05"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: -50, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_06"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: 50, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_07"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: 150, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_08"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: 250, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_09"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: 350, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R2_10"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15200, y_m: 450, z_m: 150}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+
+  # Row 3 (Rear) - 10 drones, even higher
+  - name: "Drone_R3_01"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: -450, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_02"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: -350, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_03"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: -250, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_04"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: -150, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_05"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: -50, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_06"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: 50, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_07"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: 150, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_08"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: 250, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_09"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: 350, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+  - name: "Drone_R3_10"
+    type: "drone"
+    rcs_m2: 0.01
+    swerling_model: 2
+    initial_position: {x_m: -15400, y_m: 450, z_m: 200}
+    velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
+
+# Simulation parameters
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-6
+  log_detections: true
