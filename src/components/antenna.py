@@ -12,9 +12,8 @@ References:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
-import numba
 import numpy as np
 
 from src.physics.constants import SPEED_OF_LIGHT

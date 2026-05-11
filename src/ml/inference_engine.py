@@ -34,7 +34,6 @@ try:
 except ImportError:
     JOBLIB_AVAILABLE = False
 
-from .dataset_generator import CLASS_DEFINITIONS, TargetClass
 
 
 class InferenceEngine:
@@ -196,7 +195,7 @@ class InferenceEngine:
 
             return (class_name, confidence)
 
-        except Exception as e:
+        except Exception:
             # Fail gracefully
             return ("Unknown", 0.0)
 

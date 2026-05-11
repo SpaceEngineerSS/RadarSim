@@ -18,7 +18,6 @@ import numpy as np
 
 from .constants import (
     BOLTZMANN_CONSTANT,
-    RADAR_CONSTANT_4PI_CUBED,
     SPEED_OF_LIGHT,
     STANDARD_TEMPERATURE,
 )

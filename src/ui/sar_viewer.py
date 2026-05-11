@@ -12,7 +12,7 @@ Features:
 Reference: Oliver & Quegan, "Understanding SAR Images", IEEE Press, 1998
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from PyQt6.QtCore import Qt
@@ -401,7 +401,7 @@ class SARViewer(QDialog):
             metrics["Algorithm"] = "Range-Doppler"
 
             # Update algorithm info labels
-            self.algo_label.setText(f"Algorithm: Range-Doppler")
+            self.algo_label.setText("Algorithm: Range-Doppler")
             self.bandwidth_label.setText(f"Bandwidth: {self._radar_bandwidth/1e6:.0f} MHz")
             self.aperture_label.setText(f"Targets: {len(self._targets)}")
 

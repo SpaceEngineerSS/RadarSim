@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Antenna Radiation Pattern Models
 
@@ -19,8 +20,8 @@ References:
     - Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 """
 
+
 import numpy as np
-from typing import Tuple
 
 
 class AntennaPattern:
@@ -46,7 +47,7 @@ class AntennaPattern:
         self.sll_db = sll_db
 
         # Gaussian shape constant: G(θ₃ᵈᵇ/2) = 0.5 → k = 2.776/θ₃ᵈᵇ²
-        self.k_gaussian = 2.776 / (self.beamwidth_rad ** 2)
+        self.k_gaussian = 2.776 / (self.beamwidth_rad**2)
 
     def sinc_pattern(self, theta_rad: float) -> float:
         """
@@ -82,7 +83,7 @@ class AntennaPattern:
         Returns:
             Normalized gain (0 to 1)
         """
-        return float(np.exp(-self.k_gaussian * theta_rad ** 2))
+        return float(np.exp(-self.k_gaussian * theta_rad**2))
 
     def taylor_pattern(self, theta_rad: float, nbar: int = 4) -> float:
         """
@@ -111,14 +112,12 @@ class AntennaPattern:
 
         # Beyond the main lobe, apply sidelobe cap
         if abs(u) > 1.0:
-            max_sl = sll_linear ** 2
+            max_sl = sll_linear**2
             return min(sinc_gain, max_sl)
 
         return sinc_gain
 
-    def two_way_gain_db(
-        self, theta_az_rad: float, theta_el_rad: float
-    ) -> float:
+    def two_way_gain_db(self, theta_az_rad: float, theta_el_rad: float) -> float:
         """
         Two-way antenna gain for monostatic radar.
 
@@ -134,7 +133,7 @@ class AntennaPattern:
             Two-way gain relative to boresight [dB] (always ≤ 0)
         """
         # Combined off-axis angle
-        theta_total = np.sqrt(theta_az_rad ** 2 + theta_el_rad ** 2)
+        theta_total = np.sqrt(theta_az_rad**2 + theta_el_rad**2)
         g_one_way = self.gaussian_pattern(theta_total)
         g_one_way = max(g_one_way, 1e-15)
         return float(20.0 * np.log10(g_one_way))
@@ -159,14 +158,16 @@ def validate_antenna_patterns() -> dict:
     # Test 1: Boresight gain
     g0 = pattern.gaussian_pattern(0.0)
     results["boresight_gain"] = {
-        "computed": g0, "expected": 1.0,
+        "computed": g0,
+        "expected": 1.0,
         "pass": abs(g0 - 1.0) < 1e-10,
     }
 
     # Test 2: 3dB point (Gaussian)
     g_3db = pattern.gaussian_pattern(half_bw)
     results["3db_point_gaussian"] = {
-        "computed": g_3db, "expected": 0.5,
+        "computed": g_3db,
+        "expected": 0.5,
         "error": abs(g_3db - 0.5),
         "pass": abs(g_3db - 0.5) < 0.01,
     }
@@ -174,7 +175,8 @@ def validate_antenna_patterns() -> dict:
     # Test 3: Two-way gain at boresight
     g2w = pattern.two_way_gain_db(0.0, 0.0)
     results["two_way_boresight_db"] = {
-        "computed_db": g2w, "expected_db": 0.0,
+        "computed_db": g2w,
+        "expected_db": 0.0,
         "pass": abs(g2w) < 0.01,
     }
 

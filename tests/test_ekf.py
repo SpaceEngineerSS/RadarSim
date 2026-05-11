@@ -23,10 +23,10 @@ import pytest
 from src.tracking.ekf import ExtendedKalmanFilter
 from src.tracking.kalman import KalmanState, LinearKalmanFilter
 
-
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
 # ═══════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def ekf():
@@ -49,6 +49,7 @@ def lkf():
 # TEST 1: JACOBIAN VERIFICATION
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestJacobianVerification:
     """
     Verify analytical Jacobian against numerical central-difference.
@@ -59,13 +60,16 @@ class TestJacobianVerification:
     Reference: Bar-Shalom (2001), Ch. 5.3
     """
 
-    @pytest.mark.parametrize("state_vec", [
-        np.array([10000.0, 5000.0, 100.0, -50.0]),   # Nominal
-        np.array([1000.0, 100.0, 50.0, 200.0]),       # Close range
-        np.array([50000.0, 80000.0, -100.0, 30.0]),   # Far range
-        np.array([0.0, 10000.0, 100.0, 0.0]),         # Along y-axis
-        np.array([10000.0, 0.0, 0.0, 100.0]),         # Along x-axis
-    ])
+    @pytest.mark.parametrize(
+        "state_vec",
+        [
+            np.array([10000.0, 5000.0, 100.0, -50.0]),  # Nominal
+            np.array([1000.0, 100.0, 50.0, 200.0]),  # Close range
+            np.array([50000.0, 80000.0, -100.0, 30.0]),  # Far range
+            np.array([0.0, 10000.0, 100.0, 0.0]),  # Along y-axis
+            np.array([10000.0, 0.0, 0.0, 100.0]),  # Along x-axis
+        ],
+    )
     def test_jacobian_vs_numerical(self, state_vec):
         """Analytical Jacobian must match numerical derivative."""
         H_analytical = ExtendedKalmanFilter._measurement_jacobian(state_vec)
@@ -107,6 +111,7 @@ class TestJacobianVerification:
 # TEST 2: STRAIGHT-LINE TRACKING
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestStraightLineTracking:
     """
     Verify EKF converges on a constant-velocity target.
@@ -117,9 +122,7 @@ class TestStraightLineTracking:
 
     def test_convergence(self, ekf):
         """EKF must converge to < 100m RMS on straight-line target."""
-        ekf_track = ExtendedKalmanFilter(
-            process_noise=1.0, range_std=30.0, angle_std=0.01
-        )
+        ekf_track = ExtendedKalmanFilter(process_noise=1.0, range_std=30.0, angle_std=0.01)
         state = ekf_track.initialize(position=(10000.0, 0.0), velocity=(100.0, 50.0))
 
         dt = 1.0
@@ -137,12 +140,10 @@ class TestStraightLineTracking:
             state = ekf_track.predict(state, dt)
             state = ekf_track.update(state, (z_r, z_theta))
 
-            pos_error = np.sqrt(
-                (state.x[0] - true_x)**2 + (state.x[1] - true_y)**2
-            )
+            pos_error = np.sqrt((state.x[0] - true_x) ** 2 + (state.x[1] - true_y) ** 2)
             errors.append(pos_error)
 
-        rms_last10 = np.sqrt(np.mean(np.array(errors[-10:])**2))
+        rms_last10 = np.sqrt(np.mean(np.array(errors[-10:]) ** 2))
         assert rms_last10 < 100.0, f"RMS error {rms_last10:.1f}m > 100m"
 
     def test_covariance_shrinks(self, ekf):
@@ -153,19 +154,20 @@ class TestStraightLineTracking:
         rng = np.random.default_rng(42)
         for k in range(10):
             state = ekf.predict(state, dt=1.0)
-            r = np.sqrt(state.x[0]**2 + state.x[1]**2)
+            r = np.sqrt(state.x[0] ** 2 + state.x[1] ** 2)
             theta = np.arctan2(state.x[1], state.x[0])
             state = ekf.update(state, (r + rng.normal(0, 50), theta + rng.normal(0, 0.02)))
 
         final_trace = np.trace(state.P)
-        assert final_trace < initial_trace, (
-            f"Covariance did not shrink: {initial_trace:.0f} → {final_trace:.0f}"
-        )
+        assert (
+            final_trace < initial_trace
+        ), f"Covariance did not shrink: {initial_trace:.0f} → {final_trace:.0f}"
 
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 3: 2G TURN TRACKING — EKF vs LINEAR KF
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestTurnTracking:
     """
@@ -221,10 +223,10 @@ class TestTurnTracking:
             state = ekf.predict(state, dt)
             state = ekf.update(state, (z_r, z_theta))
 
-            pos_error = np.sqrt((state.x[0] - true_x)**2 + (state.x[1] - true_y)**2)
+            pos_error = np.sqrt((state.x[0] - true_x) ** 2 + (state.x[1] - true_y) ** 2)
             errors.append(pos_error)
 
-        rms = np.sqrt(np.mean(np.array(errors)**2))
+        rms = np.sqrt(np.mean(np.array(errors) ** 2))
         assert rms < 500.0, f"EKF 2G turn RMS {rms:.0f}m > 500m"
 
     def test_ekf_vs_lkf_on_2g_turn(self):
@@ -262,21 +264,21 @@ class TestTurnTracking:
             # EKF update
             ekf_state = ekf.predict(ekf_state, dt)
             ekf_state = ekf.update(ekf_state, (true_r + noise_r, true_theta + noise_theta))
-            ekf_errors.append(np.sqrt(
-                (ekf_state.x[0] - true_x)**2 + (ekf_state.x[1] - true_y)**2
-            ))
+            ekf_errors.append(
+                np.sqrt((ekf_state.x[0] - true_x) ** 2 + (ekf_state.x[1] - true_y) ** 2)
+            )
 
             # LKF update (needs Cartesian measurement)
             z_x = (true_r + noise_r) * np.cos(true_theta + noise_theta)
             z_y = (true_r + noise_r) * np.sin(true_theta + noise_theta)
             lkf_state = lkf.predict(lkf_state, dt)
             lkf_state = lkf.update(lkf_state, (z_x, z_y))
-            lkf_errors.append(np.sqrt(
-                (lkf_state.x[0] - true_x)**2 + (lkf_state.x[1] - true_y)**2
-            ))
+            lkf_errors.append(
+                np.sqrt((lkf_state.x[0] - true_x) ** 2 + (lkf_state.x[1] - true_y) ** 2)
+            )
 
-        ekf_rms = np.sqrt(np.mean(np.array(ekf_errors)**2))
-        lkf_rms = np.sqrt(np.mean(np.array(lkf_errors)**2))
+        ekf_rms = np.sqrt(np.mean(np.array(ekf_errors) ** 2))
+        lkf_rms = np.sqrt(np.mean(np.array(lkf_errors) ** 2))
 
         # EKF with polar model may have slightly different error profile
         # than LKF with Cartesian measurements. Both should track within 500m.
@@ -288,24 +290,28 @@ class TestTurnTracking:
 # TEST 4: ANGLE WRAPPING
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestAngleWrapping:
     """Verify angle wrapping for circular statistics."""
 
-    @pytest.mark.parametrize("angle,expected", [
-        (0.0, 0.0),
-        (np.pi / 2, np.pi / 2),
-        (-np.pi / 2, -np.pi / 2),
-        (3.5, 3.5 - 2 * np.pi),
-        (-3.5, -3.5 + 2 * np.pi),
-        (2 * np.pi, 0.0),
-        (-2 * np.pi, 0.0),
-    ])
+    @pytest.mark.parametrize(
+        "angle,expected",
+        [
+            (0.0, 0.0),
+            (np.pi / 2, np.pi / 2),
+            (-np.pi / 2, -np.pi / 2),
+            (3.5, 3.5 - 2 * np.pi),
+            (-3.5, -3.5 + 2 * np.pi),
+            (2 * np.pi, 0.0),
+            (-2 * np.pi, 0.0),
+        ],
+    )
     def test_wrap_angle(self, angle, expected):
         """Wrapped angle must be in [-π, π]."""
         result = ExtendedKalmanFilter._wrap_angle(angle)
-        assert abs(result - expected) < 1e-10 or abs(abs(result) - np.pi) < 1e-10, (
-            f"wrap({angle:.4f}) = {result:.4f}, expected {expected:.4f}"
-        )
+        assert (
+            abs(result - expected) < 1e-10 or abs(abs(result) - np.pi) < 1e-10
+        ), f"wrap({angle:.4f}) = {result:.4f}, expected {expected:.4f}"
 
     def test_wrapped_in_range(self):
         """All wrapped angles must be in [-π, π]."""
@@ -318,6 +324,7 @@ class TestAngleWrapping:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5: ADAPTIVE R FROM SNR
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestAdaptiveR:
     """
@@ -360,6 +367,7 @@ class TestAdaptiveR:
 # TEST 6: UNCERTAINTY ELLIPSE
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestUncertaintyEllipse:
     """Verify uncertainty ellipse computation."""
 
@@ -367,7 +375,7 @@ class TestUncertaintyEllipse:
         """Isotropic P should produce circular ellipse."""
         P = np.diag([100.0, 100.0, 10.0, 10.0])
         ellipse = ExtendedKalmanFilter.uncertainty_ellipse(P, confidence=0.95)
-        distances = np.sqrt(ellipse[:, 0]**2 + ellipse[:, 1]**2)
+        distances = np.sqrt(ellipse[:, 0] ** 2 + ellipse[:, 1] ** 2)
         assert np.std(distances) / np.mean(distances) < 0.05, "Ellipse not circular"
 
     def test_ellipse_size_increases_with_uncertainty(self):
@@ -388,6 +396,7 @@ class TestUncertaintyEllipse:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 7: 2×2 INVERSE
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestMatrixInverse:
     """Verify explicit 2×2 matrix inversion."""

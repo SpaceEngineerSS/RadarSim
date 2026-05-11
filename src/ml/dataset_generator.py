@@ -18,11 +18,10 @@ References:
     - Swerling Target Models (IEEE)
 """
 
-import os
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd

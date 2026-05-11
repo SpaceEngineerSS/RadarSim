@@ -16,7 +16,6 @@ Signals:
     speed_changed(float): Emitted when speed control changes
 """
 
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -27,7 +26,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
-    QVBoxLayout,
     QWidget,
 )
 

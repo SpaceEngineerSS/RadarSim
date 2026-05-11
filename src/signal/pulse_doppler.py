@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Pulse-Doppler Processing Pipeline
 
@@ -19,7 +20,7 @@ References:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 
@@ -127,9 +128,7 @@ class PulseDopplerProcessor:
         # Velocity axis [m/s] (centered, after fftshift)
         doppler_resolution_hz = prf_hz / n_pulses
         velocity_resolution_mps = self.wavelength_m * doppler_resolution_hz / 2.0
-        self.velocity_axis_mps = (
-            np.arange(n_pulses) - n_pulses / 2
-        ) * velocity_resolution_mps
+        self.velocity_axis_mps = (np.arange(n_pulses) - n_pulses / 2) * velocity_resolution_mps
 
         # Blind speeds (first 3 ambiguities)
         v_blind_1 = self.wavelength_m * prf_hz / 2.0
@@ -182,10 +181,7 @@ class PulseDopplerProcessor:
         if n_targets == 0:
             # Noise-only CPI
             noise_std = np.sqrt(noise_power / 2.0)
-            cpi = noise_std * (
-                rng.standard_normal(cpi.shape)
-                + 1j * rng.standard_normal(cpi.shape)
-            )
+            cpi = noise_std * (rng.standard_normal(cpi.shape) + 1j * rng.standard_normal(cpi.shape))
             return cpi
 
         # Pulse indices: n = [0, 1, ..., N-1], shape [n_pulses, 1]
@@ -194,19 +190,19 @@ class PulseDopplerProcessor:
         # Doppler phase per pulse per target: shape [n_pulses, n_targets]
         # φ_d(n) = 4π · v · n · T_PRI / λ
         doppler_phase = (
-            4.0 * np.pi * target_velocities_mps[np.newaxis, :]
-            * n_idx * self.pri_s / self.wavelength_m
+            4.0
+            * np.pi
+            * target_velocities_mps[np.newaxis, :]
+            * n_idx
+            * self.pri_s
+            / self.wavelength_m
         )
 
         # Doppler steering vectors: shape [n_pulses, n_targets]
-        doppler_steering = target_amplitudes[np.newaxis, :] * np.exp(
-            1j * doppler_phase
-        )
+        doppler_steering = target_amplitudes[np.newaxis, :] * np.exp(1j * doppler_phase)
 
         # Range bin indices for each target
-        range_bins = np.round(
-            target_ranges_m / self.range_resolution_m
-        ).astype(int)
+        range_bins = np.round(target_ranges_m / self.range_resolution_m).astype(int)
 
         # Place compressed pulse returns (sinc response) at target range bins
         # This models the signal at the output of the matched filter,
@@ -227,10 +223,7 @@ class PulseDopplerProcessor:
 
         # Add AWGN (complex Gaussian noise)
         noise_std = np.sqrt(noise_power / 2.0)
-        cpi += noise_std * (
-            rng.standard_normal(cpi.shape)
-            + 1j * rng.standard_normal(cpi.shape)
-        )
+        cpi += noise_std * (rng.standard_normal(cpi.shape) + 1j * rng.standard_normal(cpi.shape))
 
         return cpi
 
@@ -353,8 +346,7 @@ class PulseDopplerProcessor:
         """
         # 1. Generate CPI raw data
         cpi = self.generate_cpi(
-            target_ranges_m, target_velocities_mps,
-            target_amplitudes, noise_power, seed
+            target_ranges_m, target_velocities_mps, target_amplitudes, noise_power, seed
         )
 
         # 2. Range compression (matched filtering)
@@ -403,11 +395,9 @@ class PulseDopplerProcessor:
         Reference: Richards (2005), Eq. 4.1
         """
         n_samples = max(int(self.pulse_width_s * 2 * self.bandwidth_hz), 16)
-        t = np.linspace(
-            -self.pulse_width_s / 2, self.pulse_width_s / 2, n_samples
-        )
+        t = np.linspace(-self.pulse_width_s / 2, self.pulse_width_s / 2, n_samples)
         chirp_rate = self.bandwidth_hz / self.pulse_width_s
-        phase = np.pi * chirp_rate * t ** 2
+        phase = np.pi * chirp_rate * t**2
         return np.exp(1j * phase)
 
     @staticmethod
@@ -451,9 +441,7 @@ class PulseDopplerProcessor:
         return wavelength_m * prf_hz / 2.0
 
     @staticmethod
-    def mti_frequency_response(
-        f_norm: np.ndarray, order: int = 1
-    ) -> np.ndarray:
+    def mti_frequency_response(f_norm: np.ndarray, order: int = 1) -> np.ndarray:
         """
         Compute MTI canceller frequency response.
 
@@ -480,6 +468,7 @@ class PulseDopplerProcessor:
 # ═══════════════════════════════════════════════════════════════════════
 # VALIDATION
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def validate_pulse_doppler() -> dict:
     """

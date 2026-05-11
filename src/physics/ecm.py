@@ -10,7 +10,7 @@ References:
     - Van Brunt, "Applied ECM", Vol. 1-3, EW Engineering, 1978
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
 
@@ -425,10 +425,10 @@ C_LIGHT = 299_792_458.0
 class DRFMState(Enum):
     """DRFM jammer operational states."""
 
-    IDLE = "idle"          # Not active
-    CAPTURE = "capture"    # Capturing radar's range gate
-    PULL = "pull"          # Pulling range/velocity gate away
-    RELEASE = "release"    # Releasing — radar loses track
+    IDLE = "idle"  # Not active
+    CAPTURE = "capture"  # Capturing radar's range gate
+    PULL = "pull"  # Pulling range/velocity gate away
+    RELEASE = "release"  # Releasing — radar loses track
 
 
 @dataclass
@@ -613,9 +613,7 @@ class DRFMJammer:
             false_velocity_mps = true_velocity_mps
         else:  # VGPO
             false_range_m = true_range_m
-            false_velocity_mps = (
-                true_velocity_mps + self._pull_offset_hz * wavelength_m / 2.0
-            )
+            false_velocity_mps = true_velocity_mps + self._pull_offset_hz * wavelength_m / 2.0
 
         # J/S gain: jammer is stronger than skin return
         jammer_amplitude = amplitude * 10.0 ** (self.config.gain_over_skin_db / 20.0)
@@ -627,9 +625,7 @@ class DRFMJammer:
 
         # Doppler phase for false target (phase-coherent with radar LFM)
         n_idx = np.arange(n_pulses, dtype=np.float64)
-        doppler_phase = (
-            4.0 * np.pi * false_velocity_mps * n_idx * pri_s / wavelength_m
-        )
+        doppler_phase = 4.0 * np.pi * false_velocity_mps * n_idx * pri_s / wavelength_m
         steering = jammer_amplitude * np.exp(1j * doppler_phase)
 
         # Inject false return at offset range bin
@@ -772,7 +768,7 @@ def validate_burn_through_range() -> dict:
 # Module validation
 if __name__ == "__main__":
     result = validate_burn_through_range()
-    print(f"\n=== ECM Validation ===")
+    print("\n=== ECM Validation ===")
     print(f"Test: {result['test_name']}")
     print(f"Burn-through range: {result['results']['burn_through_range_km']:.2f} km")
     print(f"Expected: {result['validation']['expected_range_km']} km")

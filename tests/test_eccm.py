@@ -22,24 +22,24 @@ References:
 import numpy as np
 import pytest
 
+from src.advanced.eccm import (
+    ECCMController,
+    FrequencyAgility,
+    PRFStagger,
+)
 from src.physics.ecm import (
     DRFMConfig,
     DRFMJammer,
     DRFMState,
     ECMSimulator,
 )
-from src.advanced.eccm import (
-    ECCMController,
-    FrequencyAgility,
-    PRFStagger,
-)
 from src.tracking.ekf import ExtendedKalmanFilter
 from src.tracking.kalman import KalmanState
-
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 1: DRFM JAMMER STATE MACHINE
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestDRFMStateMachine:
     """
@@ -147,6 +147,7 @@ class TestDRFMStateMachine:
 # TEST 2: DRFM CPI INJECTION
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestDRFMInjection:
     """
     Verify CPI injection produces coherent false returns.
@@ -211,9 +212,7 @@ class TestDRFMInjection:
         # Maximum energy should be near expected bin
         power_per_bin = np.sum(np.abs(cpi_jammed) ** 2, axis=0)
         peak_bin = np.argmax(power_per_bin)
-        assert abs(peak_bin - expected_bin) <= 2, (
-            f"Peak at bin {peak_bin}, expected {expected_bin}"
-        )
+        assert abs(peak_bin - expected_bin) <= 2, f"Peak at bin {peak_bin}, expected {expected_bin}"
 
     def test_idle_no_injection(self):
         """No injection when jammer is IDLE."""
@@ -238,6 +237,7 @@ class TestDRFMInjection:
 # TEST 3: FREQUENCY AGILITY J/S REDUCTION
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestFrequencyAgility:
     """
     Verify frequency agility reduces J/S by 10·log₁₀(N).
@@ -245,20 +245,23 @@ class TestFrequencyAgility:
     Reference: Schleher (1999), Ch. 8.2
     """
 
-    @pytest.mark.parametrize("n_hops,expected_reduction_db", [
-        (10, 10.0),    # 10·log₁₀(10) = 10 dB
-        (20, 13.01),   # 10·log₁₀(20) ≈ 13.01 dB
-        (2, 3.01),     # 10·log₁₀(2) ≈ 3.01 dB
-        (100, 20.0),   # 10·log₁₀(100) = 20 dB
-    ])
+    @pytest.mark.parametrize(
+        "n_hops,expected_reduction_db",
+        [
+            (10, 10.0),  # 10·log₁₀(10) = 10 dB
+            (20, 13.01),  # 10·log₁₀(20) ≈ 13.01 dB
+            (2, 3.01),  # 10·log₁₀(2) ≈ 3.01 dB
+            (100, 20.0),  # 10·log₁₀(100) = 20 dB
+        ],
+    )
     def test_js_reduction(self, n_hops, expected_reduction_db):
         """J/S reduction must equal 10·log₁₀(N_hops)."""
         fa = FrequencyAgility(center_freq_hz=10e9, n_hops=n_hops)
         fa.enable()
         actual = fa.js_reduction_db
-        assert abs(actual - expected_reduction_db) < 0.1, (
-            f"Expected {expected_reduction_db:.1f} dB, got {actual:.1f} dB"
-        )
+        assert (
+            abs(actual - expected_reduction_db) < 0.1
+        ), f"Expected {expected_reduction_db:.1f} dB, got {actual:.1f} dB"
 
     def test_disabled_no_reduction(self):
         """Disabled frequency agility gives 0 dB reduction."""
@@ -297,6 +300,7 @@ class TestFrequencyAgility:
 # TEST 4: PRF STAGGER
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestPRFStagger:
     """
     Verify PRF stagger produces varying PRIs.
@@ -333,6 +337,7 @@ class TestPRFStagger:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5: RGPO DISCRIMINATION
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestRGPODiscrimination:
     """
@@ -371,6 +376,7 @@ class TestRGPODiscrimination:
 # TEST 6: EKF COAST MODE
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestEKFCoastMode:
     """
     EKF must coast (prediction only) when SJNR < threshold.
@@ -388,9 +394,7 @@ class TestEKFCoastMode:
         state = ekf.predict(state, dt=1.0)
 
         # Update with heavy jamming (J/S = 30 dB)
-        state_coasted = ekf.update_with_jsr(
-            state, z_polar=(11000.0, 0.5), snr_db=20.0, jsr_db=30.0
-        )
+        state_coasted = ekf.update_with_jsr(state, z_polar=(11000.0, 0.5), snr_db=20.0, jsr_db=30.0)
 
         assert ekf.is_coasting, "Should be coasting with J/S=30 dB, SNR=20 dB"
         assert ekf.coast_count == 1
@@ -415,24 +419,18 @@ class TestEKFCoastMode:
         state = ekf.predict(state, dt=1.0)
 
         x_before = state.x.copy()
-        state_coasted = ekf.update_with_jsr(
-            state, z_polar=(99999.0, 0.0), snr_db=10.0, jsr_db=30.0
-        )
+        state_coasted = ekf.update_with_jsr(state, z_polar=(99999.0, 0.0), snr_db=10.0, jsr_db=30.0)
 
         np.testing.assert_array_equal(state_coasted.x, x_before)
 
     def test_coast_10_scans(self):
         """EKF must maintain prediction during 10 scans of coasting."""
         ekf = ExtendedKalmanFilter(process_noise=5.0)
-        state = ekf.initialize(
-            position=(10000.0, 0.0), velocity=(100.0, 50.0)
-        )
+        state = ekf.initialize(position=(10000.0, 0.0), velocity=(100.0, 50.0))
 
         for scan in range(10):
             state = ekf.predict(state, dt=1.0)
-            state = ekf.update_with_jsr(
-                state, z_polar=(10000.0, 0.5), snr_db=15.0, jsr_db=30.0
-            )
+            state = ekf.update_with_jsr(state, z_polar=(10000.0, 0.5), snr_db=15.0, jsr_db=30.0)
 
         assert ekf.coast_count == 10
         assert ekf.is_coasting
@@ -449,9 +447,7 @@ class TestEKFCoastMode:
 
         for _ in range(6):
             state = ekf.predict(state, dt=1.0)
-            state = ekf.update_with_jsr(
-                state, z_polar=(10000.0, 0.5), snr_db=10.0, jsr_db=30.0
-            )
+            state = ekf.update_with_jsr(state, z_polar=(10000.0, 0.5), snr_db=10.0, jsr_db=30.0)
 
         assert ekf.should_drop_track
 
@@ -463,17 +459,13 @@ class TestEKFCoastMode:
         # 3 scans of jamming
         for _ in range(3):
             state = ekf.predict(state, dt=1.0)
-            state = ekf.update_with_jsr(
-                state, z_polar=(10000.0, 0.0), snr_db=15.0, jsr_db=30.0
-            )
+            state = ekf.update_with_jsr(state, z_polar=(10000.0, 0.0), snr_db=15.0, jsr_db=30.0)
 
         assert ekf.coast_count == 3
 
         # Jamming clears
         state = ekf.predict(state, dt=1.0)
-        state = ekf.update_with_jsr(
-            state, z_polar=(10000.0, 0.0), snr_db=20.0, jsr_db=-10.0
-        )
+        state = ekf.update_with_jsr(state, z_polar=(10000.0, 0.0), snr_db=20.0, jsr_db=-10.0)
 
         assert ekf.coast_count == 0
         assert not ekf.is_coasting
@@ -482,6 +474,7 @@ class TestEKFCoastMode:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 7: SJNR CALCULATION
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSJNR:
     """
@@ -512,6 +505,7 @@ class TestSJNR:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 8: ECCM CONTROLLER INTEGRATION
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestECCMController:
     """
@@ -565,6 +559,7 @@ class TestECCMController:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 9: BURN-THROUGH RANGE
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestBurnThrough:
     """

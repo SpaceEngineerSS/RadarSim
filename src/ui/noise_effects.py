@@ -19,12 +19,10 @@ Reference:
     Skolnik, "Radar Handbook", 3rd Ed., Chapter 2.6 (Receiver Noise)
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QWidget
 
 
 class NoiseOverlay:

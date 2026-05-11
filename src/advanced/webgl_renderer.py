@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Gelişmiş 3D Görselleştirme Modülü (WebGL/Three.js Tabanlı)
 
@@ -17,16 +18,12 @@ Bilimsel Temeller:
 - Interactive camera controls
 """
 
-import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 from matplotlib.animation import FuncAnimation
-from mpl_toolkits.mplot3d import Axes3D
-from plotly.subplots import make_subplots
 
 
 class Advanced3DRenderer:

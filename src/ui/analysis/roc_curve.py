@@ -7,7 +7,6 @@ between Probability of Detection (Pd) and Probability of False Alarm (Pfa).
 Reference: Skolnik, "Radar Handbook", Chapter 2
 """
 
-import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (

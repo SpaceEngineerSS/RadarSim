@@ -33,33 +33,36 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller
         pip install -r requirements.txt
 
-    - name: Build with PyInstaller
-      run: pyinstaller RadarSim.spec
+    - uses: Nuitka/Nuitka-Action@main
+      with:
+        nuitka-version: main
+        script-name: run_gui.py
+        onefile: true
+        standalone: true
+        enable-plugins: pyside6,numpy
+        output-file: RadarSim
 
     - name: Package Windows
       if: matrix.os == 'windows-latest'
       run: |
-        cd dist
-        powershell Compress-Archive -Path RadarSim/* -DestinationPath ../${{ matrix.asset_name }}
+        powershell Compress-Archive -Path build/RadarSim.exe -DestinationPath ${{ matrix.asset_name }}
 
     - name: Package Linux
       if: matrix.os == 'ubuntu-latest'
       run: |
-        cd dist
-        tar -czvf ../${{ matrix.asset_name }} RadarSim/
+        tar -czvf ${{ matrix.asset_name }} -C build/ RadarSim.bin
 
     - name: Package macOS
       if: matrix.os == 'macos-latest'
       run: |
-        cd dist
-        zip -r ../${{ matrix.asset_name }} RadarSim/
+        zip -r ${{ matrix.asset_name }} build/RadarSim.bin
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 CFAR (Constant False Alarm Rate) Detectors
 
@@ -12,7 +13,7 @@ References:
 """
 
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numba
 import numpy as np

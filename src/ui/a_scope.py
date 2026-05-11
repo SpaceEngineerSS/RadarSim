@@ -14,13 +14,13 @@ Scientific Value: Visualize target returns breaking the noise floor.
 Reference: Richards, "Fundamentals of Radar Signal Processing"
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 
 class AScope(QWidget):
@@ -148,14 +148,11 @@ class AScope(QWidget):
         self.plot_widget.addItem(self.signal_scatter)
 
         # ═══ PHASE 28: Jamming Noise Strobe ═══
-        self.jam_noise_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(255, 80, 0, 160), width=2)
-        )
+        self.jam_noise_curve = pg.PlotCurveItem(pen=pg.mkPen(color=(255, 80, 0, 160), width=2))
         self.plot_widget.addItem(self.jam_noise_curve)
 
         self.jam_fill = pg.FillBetweenItem(
-            self.noise_curve, self.jam_noise_curve,
-            brush=pg.mkBrush(255, 50, 0, 40)
+            self.noise_curve, self.jam_noise_curve, brush=pg.mkBrush(255, 50, 0, 40)
         )
         self.plot_widget.addItem(self.jam_fill)
         self.jam_noise_curve.setVisible(False)
@@ -375,10 +372,7 @@ class AScope(QWidget):
 
         # Elevated noise floor proportional to J/S
         elevation = min(30, max(0, jsr_db - 5))
-        jam_noise = (
-            -10 + elevation
-            + np.random.exponential(scale=max(1, jsr_db / 5), size=n_points)
-        )
+        jam_noise = -10 + elevation + np.random.exponential(scale=max(1, jsr_db / 5), size=n_points)
 
         self.jam_noise_curve.setData(ranges, jam_noise)
         self.jam_noise_curve.setVisible(True)

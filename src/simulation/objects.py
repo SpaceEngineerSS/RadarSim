@@ -30,8 +30,6 @@ from src.physics.rcs import (
     SwerlingModel,
     SwerlingRCS,
     calculate_aspect_angle,
-    calculate_aspect_dependent_rcs,
-    get_target_type_rcs,
 )
 
 

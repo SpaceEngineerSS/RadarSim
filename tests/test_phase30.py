@@ -26,23 +26,23 @@ import numpy as np
 import pytest
 from scipy.constants import c
 
-from src.advanced.sar_isar import (
-    AdvancedSARISAR,
-    ISARProcessor,
-    SARImageResult,
-    rda_vectorized,
-)
 from src.advanced.ai_director import (
     AIDirector,
     AttackPlan,
     BlindZone,
     Difficulty,
 )
-
+from src.advanced.sar_isar import (
+    AdvancedSARISAR,
+    ISARProcessor,
+    SARImageResult,
+    rda_vectorized,
+)
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 1: SAR RESOLUTION — THEORETICAL LIMITS
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSARResolution:
     """
@@ -62,11 +62,16 @@ class TestSARResolution:
 
     def test_range_resolution_in_rda(self):
         """RDA must report correct range resolution."""
-        raw = np.random.default_rng(42).standard_normal((256, 64)) + \
-              1j * np.random.default_rng(43).standard_normal((256, 64))
+        raw = np.random.default_rng(42).standard_normal((256, 64)) + 1j * np.random.default_rng(
+            43
+        ).standard_normal((256, 64))
         result = rda_vectorized(
-            raw, bandwidth_hz=100e6, prf_hz=1000, fc_hz=10e9,
-            platform_velocity_mps=100, antenna_length_m=1.0,
+            raw,
+            bandwidth_hz=100e6,
+            prf_hz=1000,
+            fc_hz=10e9,
+            platform_velocity_mps=100,
+            antenna_length_m=1.0,
         )
         expected_dr = c / (2 * 100e6)
         assert abs(result.range_resolution_m - expected_dr) < 0.01
@@ -75,8 +80,11 @@ class TestSARResolution:
         """Δa = D/2 = 0.5m for 1m antenna."""
         result = rda_vectorized(
             np.zeros((128, 64), dtype=complex),
-            bandwidth_hz=100e6, prf_hz=1000, fc_hz=10e9,
-            platform_velocity_mps=100, antenna_length_m=1.0,
+            bandwidth_hz=100e6,
+            prf_hz=1000,
+            fc_hz=10e9,
+            platform_velocity_mps=100,
+            antenna_length_m=1.0,
         )
         assert abs(result.azimuth_resolution_m - 0.5) < 0.01
 
@@ -84,8 +92,11 @@ class TestSARResolution:
         """Δa = D/2 = 1.0m for 2m antenna."""
         result = rda_vectorized(
             np.zeros((128, 64), dtype=complex),
-            bandwidth_hz=100e6, prf_hz=1000, fc_hz=10e9,
-            platform_velocity_mps=100, antenna_length_m=2.0,
+            bandwidth_hz=100e6,
+            prf_hz=1000,
+            fc_hz=10e9,
+            platform_velocity_mps=100,
+            antenna_length_m=2.0,
         )
         assert abs(result.azimuth_resolution_m - 1.0) < 0.01
 
@@ -99,6 +110,7 @@ class TestSARResolution:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 2: VECTORIZED RDA OUTPUT
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestVectorizedRDA:
     """Verify vectorized RDA produces valid output."""
@@ -129,8 +141,10 @@ class TestVectorizedRDA:
         """A point target should produce a focused response."""
         rng = np.random.default_rng(42)
         n_range, n_az = 256, 64
-        raw = rng.standard_normal((n_range, n_az)) * 0.01 + \
-              1j * rng.standard_normal((n_range, n_az)) * 0.01
+        raw = (
+            rng.standard_normal((n_range, n_az)) * 0.01
+            + 1j * rng.standard_normal((n_range, n_az)) * 0.01
+        )
         # Inject a strong point target at center
         raw[128, 32] += 100.0
         result = rda_vectorized(raw, 100e6, 1000, 10e9, 100)
@@ -143,6 +157,7 @@ class TestVectorizedRDA:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 3: ISAR PROCESSOR
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestISARProcessor:
     """
@@ -162,8 +177,9 @@ class TestISARProcessor:
         delta_theta = rotation_rate * T_cpi
         expected_cr = wavelength / (2 * delta_theta)
 
-        cpi = np.random.default_rng(42).standard_normal((64, 256)) + \
-              1j * np.random.default_rng(43).standard_normal((64, 256))
+        cpi = np.random.default_rng(42).standard_normal((64, 256)) + 1j * np.random.default_rng(
+            43
+        ).standard_normal((64, 256))
         result = isar.process_isar(cpi, rotation_rate_rps=rotation_rate)
         assert abs(result.azimuth_resolution_m - expected_cr) < 0.01
 
@@ -203,6 +219,7 @@ class TestISARProcessor:
 # TEST 4: AI DIRECTOR — COVERAGE MAP
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestAIDirectorCoverage:
     """Verify coverage map generation and analysis."""
 
@@ -236,6 +253,7 @@ class TestAIDirectorCoverage:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5: AI DIRECTOR — BLIND ZONES
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestAIDirectorBlindZones:
     """Verify blind zone detection."""
@@ -282,6 +300,7 @@ class TestAIDirectorBlindZones:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 6: AI DIRECTOR — ATTACK PLANS
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestAIDirectorAttack:
     """Verify attack plan generation for all difficulty levels."""
@@ -349,6 +368,7 @@ class TestAIDirectorAttack:
 # TEST 7: PERFORMANCE BENCHMARKS
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestPerformance:
     """Verify processing performance meets requirements."""
 
@@ -381,8 +401,10 @@ class TestPerformance:
     def test_ai_coverage_100x100(self):
         """Coverage map (100×100) with 5 radars in < 100ms."""
         director = AIDirector(grid_size_m=200_000, grid_resolution=100)
-        radars = [np.array([50000 * np.cos(a), 50000 * np.sin(a)])
-                  for a in np.linspace(0, 2 * np.pi, 5, endpoint=False)]
+        radars = [
+            np.array([50000 * np.cos(a), 50000 * np.sin(a)])
+            for a in np.linspace(0, 2 * np.pi, 5, endpoint=False)
+        ]
 
         start = time.perf_counter()
         coverage = director.analyze_coverage(radars, detection_range_m=80_000)

@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Advanced Radar Modules
 
@@ -44,4 +45,3 @@ try:
     from .ai_director import AIDirector, Difficulty
 except ImportError:
     pass
-

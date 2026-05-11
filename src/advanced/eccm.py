@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Electronic Counter-Countermeasures (ECCM) Module
 
@@ -17,11 +18,9 @@ References:
     - Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # FREQUENCY AGILITY

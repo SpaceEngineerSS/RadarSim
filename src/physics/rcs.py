@@ -13,7 +13,7 @@ References:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Union
+from typing import Dict, Union
 
 import numba
 import numpy as np

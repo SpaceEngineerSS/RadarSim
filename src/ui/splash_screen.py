@@ -11,7 +11,7 @@ Features:
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
-from PyQt6.QtWidgets import QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QSplashScreen
 
 
 class RadarSimSplash(QSplashScreen):

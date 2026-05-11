@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Radar Waveform Generation
 
@@ -11,7 +12,6 @@ References:
 """
 
 from enum import Enum
-from typing import Optional, Tuple
 
 import numba
 import numpy as np

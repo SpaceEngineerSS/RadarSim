@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 AI Tactical Director (Red Force Agent)
 
@@ -23,7 +24,7 @@ References:
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -33,6 +34,7 @@ C_LIGHT = 299_792_458.0
 
 class Difficulty(Enum):
     """Scenario difficulty levels."""
+
     EASY = auto()
     MEDIUM = auto()
     HARD = auto()
@@ -49,6 +51,7 @@ class BlindZone:
         area_km2: Approximate area [km²]
         min_pd: Minimum detection probability in the zone
     """
+
     center_xy: np.ndarray
     cells: List[Tuple[int, int]]
     area_km2: float
@@ -65,6 +68,7 @@ class WaypointRoute:
         total_exposure: Sum of Pd along the route
         route_length_m: Total path length [m]
     """
+
     waypoints: List[np.ndarray]
     total_exposure: float
     route_length_m: float
@@ -82,6 +86,7 @@ class AttackPlan:
         attack_azimuth_deg: Primary attack direction [deg]
         description: Human-readable plan description
     """
+
     difficulty: Difficulty
     target_routes: List[WaypointRoute] = field(default_factory=list)
     jammer_positions: List[np.ndarray] = field(default_factory=list)
@@ -212,12 +217,14 @@ class AIDirector:
                         area_km2 = len(cells) * (self._cell_size_m / 1000) ** 2
                         min_pd = float(np.min(coverage[mask]))
 
-                        zones.append(BlindZone(
-                            center_xy=np.array([center_x, center_y]),
-                            cells=cells,
-                            area_km2=area_km2,
-                            min_pd=min_pd,
-                        ))
+                        zones.append(
+                            BlindZone(
+                                center_xy=np.array([center_x, center_y]),
+                                cells=cells,
+                                area_km2=area_km2,
+                                min_pd=min_pd,
+                            )
+                        )
 
         # Sort by area (largest first)
         zones.sort(key=lambda z: z.area_km2, reverse=True)
@@ -278,9 +285,7 @@ class AIDirector:
             # Determine primary attack azimuth
             if blind_zones:
                 center = blind_zones[0].center_xy
-                plan.attack_azimuth_deg = float(np.degrees(
-                    np.arctan2(center[1], center[0])
-                ))
+                plan.attack_azimuth_deg = float(np.degrees(np.arctan2(center[1], center[0])))
 
         return plan
 
@@ -352,17 +357,16 @@ class AIDirector:
     def _random_route(self) -> WaypointRoute:
         """Generate a random straight-line approach route."""
         angle = self.rng.uniform(0, 2 * np.pi)
-        start = np.array([
-            self.grid_size_m / 2 * np.cos(angle),
-            self.grid_size_m / 2 * np.sin(angle),
-        ])
+        start = np.array(
+            [
+                self.grid_size_m / 2 * np.cos(angle),
+                self.grid_size_m / 2 * np.sin(angle),
+            ]
+        )
         end = np.array([0.0, 0.0])  # Aim for origin
 
         n_waypoints = 10
-        waypoints = [
-            start + (end - start) * t / (n_waypoints - 1)
-            for t in range(n_waypoints)
-        ]
+        waypoints = [start + (end - start) * t / (n_waypoints - 1) for t in range(n_waypoints)]
 
         length = float(np.linalg.norm(end - start))
         return WaypointRoute(
@@ -407,10 +411,12 @@ class AIDirector:
             best_next = current + direction * step_size
 
             for angle_offset in [-0.5, -0.25, 0.0, 0.25, 0.5]:
-                rot = np.array([
-                    [np.cos(angle_offset), -np.sin(angle_offset)],
-                    [np.sin(angle_offset), np.cos(angle_offset)],
-                ])
+                rot = np.array(
+                    [
+                        [np.cos(angle_offset), -np.sin(angle_offset)],
+                        [np.sin(angle_offset), np.cos(angle_offset)],
+                    ]
+                )
                 candidate_dir = rot @ direction
                 candidate = current + candidate_dir * step_size
 

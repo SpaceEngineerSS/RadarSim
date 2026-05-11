@@ -9,11 +9,11 @@ Post-flight analysis dashboard with pyqtgraph charts:
 Integrates with ReplayLoader to display historical data.
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import numpy as np
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 try:
     import pyqtgraph as pg

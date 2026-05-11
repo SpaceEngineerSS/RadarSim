@@ -12,14 +12,13 @@ Features:
 Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 2
 """
 
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from src.physics.atmospheric import ITU_R_P676
-from src.physics.radar_equation import RadarParameters, calculate_received_power, calculate_snr
+from src.physics.radar_equation import RadarParameters, calculate_snr
 from src.physics.rcs import SwerlingModel
 
 from .objects import MotionModel, Radar, SimulationState, Target
@@ -406,9 +405,7 @@ class SimulationEngine:
         amplitudes = []
 
         for target in self.targets:
-            geom = self.radar.calculate_target_geometry(
-                target.position, target.velocity
-            )
+            geom = self.radar.calculate_target_geometry(target.position, target.velocity)
             r_m = geom["range_m"]
             if r_m < 100.0 or r_m > self._pd_processor.max_unambiguous_range_m:
                 continue

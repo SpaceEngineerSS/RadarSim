@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 RF Spektrum Modelleme Modülü
 
@@ -14,7 +15,6 @@ Kaynaklar:
 - Richards, "Fundamentals of Radar Signal Processing", 2nd Ed., McGraw-Hill, 2014
 """
 
-from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np

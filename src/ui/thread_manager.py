@@ -18,11 +18,10 @@ import os
 # Import simulation engine
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
-from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -49,7 +48,10 @@ class SimulationWorker(QObject):
     error = pyqtSignal(str)
 
     def __init__(
-        self, engine: SimulationEngine, update_rate_hz: float = 30.0, parent: Optional[QObject] = None
+        self,
+        engine: SimulationEngine,
+        update_rate_hz: float = 30.0,
+        parent: Optional[QObject] = None,
     ):
         """
         Initialize simulation worker.
@@ -171,7 +173,7 @@ class SimulationWorker(QObject):
                     if hasattr(track.state, "P") and track.state.P is not None:
                         track_dict["covariance"] = track.state.P.tolist()
                     tracks_data.append(track_dict)
-            except Exception as e:
+            except Exception:
                 pass  # Fail silently
 
         # Build false targets data for visualization (with safety)
@@ -258,6 +260,7 @@ class SimulationWorker(QObject):
         if not hasattr(self, "_eccm_controller"):
             try:
                 from src.advanced.eccm import ECCMController
+
                 self._eccm_controller = ECCMController(
                     center_freq_hz=getattr(self.engine, "frequency_hz", 10e9),
                     nominal_prf_hz=getattr(self.engine, "prf_hz", 1000.0),
@@ -299,7 +302,6 @@ class SimulationWorker(QObject):
         return self._paused
 
 
-
 class SimulationThread(QThread):
     """
     Thread wrapper for SimulationWorker.
@@ -318,7 +320,10 @@ class SimulationThread(QThread):
     error = pyqtSignal(str)
 
     def __init__(
-        self, engine: SimulationEngine, update_rate_hz: float = 30.0, parent: Optional[QObject] = None
+        self,
+        engine: SimulationEngine,
+        update_rate_hz: float = 30.0,
+        parent: Optional[QObject] = None,
     ):
         """
         Initialize simulation thread.
@@ -554,7 +559,7 @@ class SimulationThread(QThread):
         Reference: Bar-Shalom (2001), Ch. 5.3
         """
         try:
-            if hasattr(self.engine, 'track_manager') and self.engine.track_manager is not None:
+            if hasattr(self.engine, "track_manager") and self.engine.track_manager is not None:
                 self.engine.track_manager.set_ekf_mode(enabled)
                 if enabled:
                     print("[EKF] Extended Kalman Filter ACTIVATED (polar measurements)")
@@ -569,19 +574,20 @@ class SimulationThread(QThread):
 
     def __init_eccm(self):
         """Lazy-initialize ECCM controller."""
-        if not hasattr(self, '_eccm_controller'):
+        if not hasattr(self, "_eccm_controller"):
             try:
                 from src.advanced.eccm import ECCMController
+
                 self._eccm_controller = ECCMController(
-                    center_freq_hz=getattr(self.engine, 'frequency_hz', 10e9),
-                    nominal_prf_hz=getattr(self.engine, 'prf_hz', 1000.0),
+                    center_freq_hz=getattr(self.engine, "frequency_hz", 10e9),
+                    nominal_prf_hz=getattr(self.engine, "prf_hz", 1000.0),
                 )
             except ImportError:
                 self._eccm_controller = None
 
     def _get_eccm_state(self) -> dict:
         """Get ECCM state for UI."""
-        if hasattr(self, '_eccm_controller') and self._eccm_controller is not None:
+        if hasattr(self, "_eccm_controller") and self._eccm_controller is not None:
             return self._eccm_controller.get_status()
         return {"jamming_active": False, "effective_jsr_db": -100}
 
@@ -609,7 +615,9 @@ class SimulationThread(QThread):
         if self._eccm_controller:
             if enabled:
                 self._eccm_controller.enable_frequency_agility()
-                print(f"[ECCM] Frequency Agility ON — J/S reduced by {self._eccm_controller.freq_agility.js_reduction_db:.0f} dB")
+                print(
+                    f"[ECCM] Frequency Agility ON — J/S reduced by {self._eccm_controller.freq_agility.js_reduction_db:.0f} dB"
+                )
             else:
                 self._eccm_controller.disable_frequency_agility()
                 print("[ECCM] Frequency Agility OFF")

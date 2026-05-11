@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Track Manager for Multi-Target Tracking
 
@@ -383,10 +384,7 @@ class TrackManager:
         """
         if not self.use_ekf or self._ekf is None:
             # Fallback: convert to Cartesian and use standard update
-            cartesian = [
-                (r * np.cos(theta), r * np.sin(theta))
-                for r, theta in polar_detections
-            ]
+            cartesian = [(r * np.cos(theta), r * np.sin(theta)) for r, theta in polar_detections]
             return self.update(cartesian, dt)
 
         current_time = time.time()
@@ -397,10 +395,7 @@ class TrackManager:
                 track.state = self._ekf.predict(track.state, dt)
 
         # 2. Convert polar to Cartesian for association only
-        cartesian_dets = [
-            (r * np.cos(theta), r * np.sin(theta))
-            for r, theta in polar_detections
-        ]
+        cartesian_dets = [(r * np.cos(theta), r * np.sin(theta)) for r, theta in polar_detections]
 
         # 3. Data association (in Cartesian space)
         associations, unassigned_dets, unassigned_tracks = self._associate(cartesian_dets)
@@ -448,8 +443,6 @@ class TrackManager:
             self._next_id += 1
 
         # 7. Remove deleted tracks
-        self.tracks = {
-            tid: t for tid, t in self.tracks.items() if t.status != TrackStatus.DELETED
-        }
+        self.tracks = {tid: t for tid, t in self.tracks.items() if t.status != TrackStatus.DELETED}
 
         return list(self.tracks.values())

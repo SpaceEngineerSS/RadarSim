@@ -159,7 +159,7 @@ class ReplayLoader:
 
         # Validate structure
         if "timestamps" not in self._file:
-            raise ValueError(f"Invalid file format: missing 'timestamps' dataset")
+            raise ValueError("Invalid file format: missing 'timestamps' dataset")
 
         # Load timestamps (small, keep in memory)
         self._timestamps = np.array(self._file["timestamps"])

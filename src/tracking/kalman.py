@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Linear Kalman Filter for Radar Target Tracking
 
@@ -13,7 +14,7 @@ Reference:
     - Blackman, S. "Design and Analysis of Modern Tracking Systems", 1999
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np

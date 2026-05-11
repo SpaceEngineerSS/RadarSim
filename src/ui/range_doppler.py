@@ -25,7 +25,7 @@ Migration Note: Ported from gui/widgets/range_doppler.py with
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSlot
@@ -336,15 +336,15 @@ class RangeDopplerScope(QWidget):
             self._pd_mode = True
             self._header_label.setText("RANGE-DOPPLER MAP [PULSE-DOPPLER]")
             self._header_label.setStyleSheet(
-                f"""
-                QLabel {{
+                """
+                QLabel {
                     color: #00ffaa;
                     font-family: 'Consolas', monospace;
                     font-size: 12px;
                     font-weight: bold;
                     padding: 5px;
                     background-color: rgba(0, 80, 40, 180);
-                }}
+                }
             """
             )
 

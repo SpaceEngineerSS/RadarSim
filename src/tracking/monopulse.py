@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Monopulse Angle Estimation
 
@@ -13,7 +14,6 @@ References:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 

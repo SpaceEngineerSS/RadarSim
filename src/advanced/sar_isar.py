@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Gelişmiş SAR/ISAR (Synthetic Aperture Radar) Modülü
 
@@ -16,12 +17,11 @@ Algoritmalar:
 - Polar Format Algorithm (PFA)
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
-import numba
 import numpy as np
 import scipy.signal as signal
-from numba import jit, prange
+from numba import prange
 from scipy.constants import c
 from scipy.fft import fft2, fftshift, ifft2, ifftshift
 
@@ -440,7 +440,6 @@ class AdvancedSARISAR:
         }
 
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # PHASE 30: VECTORIZED RDA & ISAR PROCESSOR
 # ═══════════════════════════════════════════════════════════════════════
@@ -656,8 +655,7 @@ class ISARProcessor:
 
         # ── Step 1: Range compression (FFT along fast-time) ──
         range_compressed = np.fft.ifft(
-            np.fft.fft(cpi_data, axis=1) *
-            np.conj(self._chirp_spectrum(n_range))[np.newaxis, :],
+            np.fft.fft(cpi_data, axis=1) * np.conj(self._chirp_spectrum(n_range))[np.newaxis, :],
             axis=1,
         )
 
@@ -686,11 +684,15 @@ class ISARProcessor:
         image_db = 20.0 * np.log10(mag / np.max(mag))
 
         range_axis = np.arange(n_range) * self.range_res_m
-        cross_range_axis = np.linspace(
-            -n_pulses / 2 * cross_range_res,
-            n_pulses / 2 * cross_range_res,
-            n_pulses,
-        ) if np.isfinite(cross_range_res) else np.arange(n_pulses, dtype=float)
+        cross_range_axis = (
+            np.linspace(
+                -n_pulses / 2 * cross_range_res,
+                n_pulses / 2 * cross_range_res,
+                n_pulses,
+            )
+            if np.isfinite(cross_range_res)
+            else np.arange(n_pulses, dtype=float)
+        )
 
         return SARImageResult(
             image_db=image_db,
@@ -702,8 +704,9 @@ class ISARProcessor:
 
     def _chirp_spectrum(self, n_range: int) -> np.ndarray:
         """Generate chirp reference spectrum for range compression."""
-        t = np.linspace(-0.5 / self.bandwidth_hz * n_range,
-                        0.5 / self.bandwidth_hz * n_range, n_range)
+        t = np.linspace(
+            -0.5 / self.bandwidth_hz * n_range, 0.5 / self.bandwidth_hz * n_range, n_range
+        )
         chirp_rate = self.bandwidth_hz / (1.0 / self.bandwidth_hz * n_range)
         chirp = np.exp(1j * np.pi * chirp_rate * t**2)
         return np.fft.fft(chirp)
@@ -730,4 +733,3 @@ class ISARProcessor:
             aligned[i] = np.roll(range_profiles[i], -shift)
 
         return aligned
-

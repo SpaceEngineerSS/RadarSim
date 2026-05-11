@@ -30,7 +30,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # DATA STRUCTURES
 # ═══════════════════════════════════════════════════════════════════════

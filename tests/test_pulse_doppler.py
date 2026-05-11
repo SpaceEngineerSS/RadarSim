@@ -20,13 +20,13 @@ Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 import numpy as np
 import pytest
 
-from src.signal.pulse_doppler import PulseDopplerProcessor, RangeDopplerMap
 from src.signal.antenna_pattern import AntennaPattern
-
+from src.signal.pulse_doppler import PulseDopplerProcessor, RangeDopplerMap
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
 # ═══════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def xband_processor():
@@ -62,6 +62,7 @@ def sband_processor():
 # TEST 1: MATCHED FILTER GAIN
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestMatchedFilterGain:
     """
     Verify pulse compression gain matches theory.
@@ -88,6 +89,7 @@ class TestMatchedFilterGain:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 2: MTI DC NULL (>60 dB SUPPRESSION)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestMTIDCNull:
     """
@@ -169,14 +171,15 @@ class TestMTIDCNull:
         peak_no_mti = np.max(rd_no_mti.data_db)
         suppression_db = peak_no_mti - peak_mti
 
-        assert suppression_db > 20.0, (
-            f"MTI suppression only {suppression_db:.1f} dB, expected > 20 dB"
-        )
+        assert (
+            suppression_db > 20.0
+        ), f"MTI suppression only {suppression_db:.1f} dB, expected > 20 dB"
 
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 3: TARGET LOCALIZATION (±1 BIN)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestTargetLocalization:
     """
@@ -227,7 +230,9 @@ class TestTargetLocalization:
 
         peak_idx = np.unravel_index(np.argmax(rd.data_db), rd.data_db.shape)
         peak_vel = rd.velocity_axis_mps[peak_idx[0]]
-        vel_res = xband_processor.wavelength_m * xband_processor.prf_hz / (2.0 * xband_processor.n_pulses)
+        vel_res = (
+            xband_processor.wavelength_m * xband_processor.prf_hz / (2.0 * xband_processor.n_pulses)
+        )
         error_bins = abs(peak_vel - target_vel) / vel_res
 
         assert error_bins <= 1.5, (
@@ -250,7 +255,7 @@ class TestTargetLocalization:
         peak1_flat = np.argmax(flat)
         # Mask around first peak
         mask = flat.copy()
-        mask[max(0, peak1_flat - 20):peak1_flat + 20] = -np.inf
+        mask[max(0, peak1_flat - 20) : peak1_flat + 20] = -np.inf
         peak2_flat = np.argmax(mask)
 
         # Both peaks must exist above noise
@@ -261,6 +266,7 @@ class TestTargetLocalization:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 4: BLIND SPEED CALCULATION
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestBlindSpeed:
     """
@@ -297,6 +303,7 @@ class TestBlindSpeed:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5: ANTENNA PATTERN
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestAntennaPattern:
     """
@@ -335,6 +342,7 @@ class TestAntennaPattern:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 6: INTEGRATION (R-D MAP STRUCTURE)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestRangeDopplerMap:
     """Verify R-D map output structure and metadata."""
@@ -396,8 +404,8 @@ class TestRangeDopplerMap:
 # ═══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    from src.signal.pulse_doppler import validate_pulse_doppler
     from src.signal.antenna_pattern import validate_antenna_patterns
+    from src.signal.pulse_doppler import validate_pulse_doppler
 
     print("=" * 60)
     print("PULSE-DOPPLER VALIDATION SUITE")

@@ -590,8 +590,7 @@ class MainWindow(QMainWindow):
         self.prf_stagger_action.setCheckable(True)
         self.prf_stagger_action.setChecked(False)
         self.prf_stagger_action.setToolTip(
-            "Vary PRI ±5% to defeat RGPO\n"
-            "Reference: Schleher (1999), Ch. 8.4"
+            "Vary PRI ±5% to defeat RGPO\n" "Reference: Schleher (1999), Ch. 8.4"
         )
         self.prf_stagger_action.triggered.connect(self._on_prf_stagger_toggled)
         ew_menu.addAction(self.prf_stagger_action)
@@ -916,11 +915,11 @@ class MainWindow(QMainWindow):
                 # Pass to RHI scope for elevation profile
                 if hasattr(self.rhi_scope, "set_terrain"):
                     self.rhi_scope.set_terrain(terrain)
-                    print(f"[TERRAIN] Passed to RHI scope")
+                    print("[TERRAIN] Passed to RHI scope")
                 # Pass to 3D tactical map for surface rendering
                 if hasattr(self.tactical_3d, "set_terrain_from_map"):
                     self.tactical_3d.set_terrain_from_map(terrain)
-                    print(f"[TERRAIN] Passed to 3D tactical map")
+                    print("[TERRAIN] Passed to 3D tactical map")
 
             # Sync control panel with loaded radar parameters
             self.control_panel.update_from_radar(self.engine.radar)
@@ -1246,7 +1245,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[SAR] Error generating image: {e}")
             self.sar_viewer._generate_demo_image()
-            self.status_bar.showMessage(f"SAR Demo Image generated")
+            self.status_bar.showMessage("SAR Demo Image generated")
 
         # Show the viewer
         self.sar_viewer.show()
@@ -1290,7 +1289,7 @@ class MainWindow(QMainWindow):
 
     def _on_pulse_doppler_toggled(self, checked: bool) -> None:
         """Handle Pulse-Doppler Processing toggle."""
-        mti_order = 1 if hasattr(self, 'pd_mti_action') and self.pd_mti_action.isChecked() else 0
+        mti_order = 1 if hasattr(self, "pd_mti_action") and self.pd_mti_action.isChecked() else 0
         if self.sim_thread and hasattr(self.sim_thread, "set_pulse_doppler_mode"):
             self.sim_thread.set_pulse_doppler_mode(
                 enabled=checked, n_pulses=64, prf_hz=1000.0, mti_order=mti_order
@@ -1302,7 +1301,7 @@ class MainWindow(QMainWindow):
     def _on_pd_mti_toggled(self, checked: bool) -> None:
         """Handle MTI Canceller toggle within Pulse-Doppler mode."""
         mti_order = 1 if checked else 0
-        pd_enabled = hasattr(self, 'pd_action') and self.pd_action.isChecked()
+        pd_enabled = hasattr(self, "pd_action") and self.pd_action.isChecked()
         if pd_enabled and self.sim_thread and hasattr(self.sim_thread, "set_pulse_doppler_mode"):
             self.sim_thread.set_pulse_doppler_mode(
                 enabled=True, n_pulses=64, prf_hz=1000.0, mti_order=mti_order

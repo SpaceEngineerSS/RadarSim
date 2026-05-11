@@ -26,9 +26,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pyqtgraph as pg
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 
 
 class Affiliation(Enum):
@@ -111,8 +110,8 @@ class SymbolColors:
     VELOCITY_LEADER = QColor(255, 255, 255, 180)
 
     # Phase 28: Jammed status
-    JAMMED = QColor(255, 0, 255)          # Magenta
-    JAMMED_GLOW = QColor(255, 0, 255, 80) # Pulsing glow
+    JAMMED = QColor(255, 0, 255)  # Magenta
+    JAMMED_GLOW = QColor(255, 0, 255, 80)  # Pulsing glow
 
     @classmethod
     def get_color(cls, affiliation: Affiliation) -> QColor:
@@ -325,6 +324,7 @@ class SymbolGenerator:
         if symbol.is_jammed:
             # Pulsing magenta border
             import time
+
             pulse = int(128 + 127 * np.sin(time.time() * 6))  # 3 Hz pulse
             jammed_color = QColor(255, 0, 255, pulse)
             jammed_pen = QPen(jammed_color, 3)

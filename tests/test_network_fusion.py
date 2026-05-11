@@ -38,10 +38,10 @@ from src.simulation.network_manager import (
     TrackAssociator,
 )
 
-
 # ═══════════════════════════════════════════════════════════════════
 # TEST 1: COVARIANCE INTERSECTION — CORE PROPERTY
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestCovarianceIntersection:
     """
@@ -64,9 +64,9 @@ class TestCovarianceIntersection:
 
         tr_fused = np.trace(P_f)
         tr_min = min(np.trace(P1), np.trace(P2))
-        assert tr_fused <= tr_min + 1e-6, (
-            f"tr(P_fused)={tr_fused:.1f} > min(tr(P1),tr(P2))={tr_min:.1f}"
-        )
+        assert (
+            tr_fused <= tr_min + 1e-6
+        ), f"tr(P_fused)={tr_fused:.1f} > min(tr(P1),tr(P2))={tr_min:.1f}"
 
     def test_trace_reduction_full(self):
         """Fused trace ≤ min for full (non-diagonal) covariance."""
@@ -145,6 +145,7 @@ class TestCovarianceIntersection:
 # TEST 2: MULTI-ESTIMATE CI
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestMultiEstimateCI:
     """
     Verify CI for N > 2 estimates.
@@ -198,6 +199,7 @@ class TestMultiEstimateCI:
 # TEST 3: STROBE TRIANGULATION
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestStrobeTriangulation:
     """
     Verify jammer triangulation via AOA bearing intersection.
@@ -216,13 +218,12 @@ class TestStrobeTriangulation:
 
         strobes = []
         for i, pos in enumerate(radars):
-            bearing = np.arctan2(
-                jammer_pos[1] - pos[1], jammer_pos[0] - pos[0]
+            bearing = np.arctan2(jammer_pos[1] - pos[1], jammer_pos[0] - pos[0])
+            strobes.append(
+                StrobeReport(
+                    node_id=f"R{i}", radar_position=pos, bearing_rad=bearing, timestamp=0.0
+                )
             )
-            strobes.append(StrobeReport(
-                node_id=f"R{i}", radar_position=pos,
-                bearing_rad=bearing, timestamp=0.0
-            ))
 
         result = StrobeTriangulator.triangulate(strobes)
         assert result is not None
@@ -244,14 +245,13 @@ class TestStrobeTriangulation:
 
         strobes = []
         for i, pos in enumerate(radars):
-            bearing = np.arctan2(
-                jammer_pos[1] - pos[1], jammer_pos[0] - pos[0]
-            )
+            bearing = np.arctan2(jammer_pos[1] - pos[1], jammer_pos[0] - pos[0])
             bearing += rng.normal(0, np.radians(1.0))  # 1° noise
-            strobes.append(StrobeReport(
-                node_id=f"R{i}", radar_position=pos,
-                bearing_rad=bearing, timestamp=0.0
-            ))
+            strobes.append(
+                StrobeReport(
+                    node_id=f"R{i}", radar_position=pos, bearing_rad=bearing, timestamp=0.0
+                )
+            )
 
         result = StrobeTriangulator.triangulate(strobes)
         assert result is not None
@@ -265,12 +265,16 @@ class TestStrobeTriangulation:
         """2 bearings must produce a valid intersection."""
         strobes = [
             StrobeReport(
-                node_id="R1", radar_position=np.array([0.0, 0.0]),
-                bearing_rad=np.radians(45), timestamp=0.0
+                node_id="R1",
+                radar_position=np.array([0.0, 0.0]),
+                bearing_rad=np.radians(45),
+                timestamp=0.0,
             ),
             StrobeReport(
-                node_id="R2", radar_position=np.array([10000.0, 0.0]),
-                bearing_rad=np.radians(135), timestamp=0.0
+                node_id="R2",
+                radar_position=np.array([10000.0, 0.0]),
+                bearing_rad=np.radians(135),
+                timestamp=0.0,
             ),
         ]
 
@@ -287,12 +291,16 @@ class TestStrobeTriangulation:
         """Parallel bearings should return None (degenerate)."""
         strobes = [
             StrobeReport(
-                node_id="R1", radar_position=np.array([0.0, 0.0]),
-                bearing_rad=np.radians(90), timestamp=0.0
+                node_id="R1",
+                radar_position=np.array([0.0, 0.0]),
+                bearing_rad=np.radians(90),
+                timestamp=0.0,
             ),
             StrobeReport(
-                node_id="R2", radar_position=np.array([10000.0, 0.0]),
-                bearing_rad=np.radians(90), timestamp=0.0
+                node_id="R2",
+                radar_position=np.array([10000.0, 0.0]),
+                bearing_rad=np.radians(90),
+                timestamp=0.0,
             ),
         ]
 
@@ -306,16 +314,23 @@ class TestStrobeTriangulation:
         result = StrobeTriangulator.triangulate([])
         assert result is None
 
-        result = StrobeTriangulator.triangulate([StrobeReport(
-            node_id="R1", radar_position=np.array([0.0, 0.0]),
-            bearing_rad=0.0, timestamp=0.0
-        )])
+        result = StrobeTriangulator.triangulate(
+            [
+                StrobeReport(
+                    node_id="R1",
+                    radar_position=np.array([0.0, 0.0]),
+                    bearing_rad=0.0,
+                    timestamp=0.0,
+                )
+            ]
+        )
         assert result is None
 
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 4: GDOP
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestGDOP:
     """
@@ -355,6 +370,7 @@ class TestGDOP:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5: LATENCY MODEL
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestLatencyModel:
     """
@@ -408,6 +424,7 @@ class TestLatencyModel:
 # TEST 6: TRACK-TO-TRACK ASSOCIATION
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestTrackAssociation:
     """
     Verify T2TA matching.
@@ -418,10 +435,8 @@ class TestTrackAssociation:
     def test_nearby_tracks_associate(self):
         """Tracks within gate should be associated."""
         assoc = TrackAssociator(gate_distance_m=500)
-        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]),
-                          np.eye(4), 0.0)
-        t2 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 48, 32]),
-                          np.eye(4), 0.0)
+        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), np.eye(4), 0.0)
+        t2 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 48, 32]), np.eye(4), 0.0)
 
         pairs = assoc.associate([t1], [t2])
         assert len(pairs) == 1
@@ -429,10 +444,8 @@ class TestTrackAssociation:
     def test_distant_tracks_no_associate(self):
         """Tracks outside gate should not associate."""
         assoc = TrackAssociator(gate_distance_m=500)
-        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]),
-                          np.eye(4), 0.0)
-        t2 = NetworkTrack("R2:1", "R2", np.array([5000, 8000, 48, 32]),
-                          np.eye(4), 0.0)
+        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), np.eye(4), 0.0)
+        t2 = NetworkTrack("R2:1", "R2", np.array([5000, 8000, 48, 32]), np.eye(4), 0.0)
 
         pairs = assoc.associate([t1], [t2])
         assert len(pairs) == 0
@@ -440,14 +453,10 @@ class TestTrackAssociation:
     def test_multiple_tracks_greedy(self):
         """Greedy matching: each track used at most once."""
         assoc = TrackAssociator(gate_distance_m=1000)
-        t_a1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 0, 0]),
-                            np.eye(4), 0.0)
-        t_a2 = NetworkTrack("R1:2", "R1", np.array([5000, 6000, 0, 0]),
-                            np.eye(4), 0.0)
-        t_b1 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 0, 0]),
-                            np.eye(4), 0.0)
-        t_b2 = NetworkTrack("R2:2", "R2", np.array([5100, 5950, 0, 0]),
-                            np.eye(4), 0.0)
+        t_a1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 0, 0]), np.eye(4), 0.0)
+        t_a2 = NetworkTrack("R1:2", "R1", np.array([5000, 6000, 0, 0]), np.eye(4), 0.0)
+        t_b1 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 0, 0]), np.eye(4), 0.0)
+        t_b2 = NetworkTrack("R2:2", "R2", np.array([5100, 5950, 0, 0]), np.eye(4), 0.0)
 
         pairs = assoc.associate([t_a1, t_a2], [t_b1, t_b2])
         assert len(pairs) == 2
@@ -456,6 +465,7 @@ class TestTrackAssociation:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 7: NETWORK MANAGER INTEGRATION
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestNetworkManager:
     """
@@ -478,12 +488,16 @@ class TestNetworkManager:
         nm.register_node("R1", np.array([0.0, 0.0]))
         nm.register_node("R2", np.array([50000.0, 0.0]))
 
-        t1 = NetworkTrack("R1:1", "R1",
-                          np.array([25000.0, 15000.0, 100.0, 50.0]),
-                          np.diag([100, 200, 10, 20]), 0.0)
-        t2 = NetworkTrack("R2:1", "R2",
-                          np.array([25050.0, 14980.0, 98.0, 52.0]),
-                          np.diag([150, 100, 15, 10]), 0.0)
+        t1 = NetworkTrack(
+            "R1:1",
+            "R1",
+            np.array([25000.0, 15000.0, 100.0, 50.0]),
+            np.diag([100, 200, 10, 20]),
+            0.0,
+        )
+        t2 = NetworkTrack(
+            "R2:1", "R2", np.array([25050.0, 14980.0, 98.0, 52.0]), np.diag([150, 100, 15, 10]), 0.0
+        )
 
         nm.submit_tracks("R1", [t1], current_time=0.0)
         nm.submit_tracks("R2", [t2], current_time=0.0)
@@ -510,10 +524,18 @@ class TestNetworkManager:
                 jammer_true[1] - node.position_xy[1],
                 jammer_true[0] - node.position_xy[0],
             )
-            nm.submit_strobes(nid, [StrobeReport(
-                node_id=nid, radar_position=node.position_xy,
-                bearing_rad=bearing, timestamp=0.0
-            )], current_time=0.0)
+            nm.submit_strobes(
+                nid,
+                [
+                    StrobeReport(
+                        node_id=nid,
+                        radar_position=node.position_xy,
+                        bearing_rad=bearing,
+                        timestamp=0.0,
+                    )
+                ],
+                current_time=0.0,
+            )
 
         jammer_locs = nm.triangulate_jammers()
         assert len(jammer_locs) == 1
@@ -526,6 +548,7 @@ class TestNetworkManager:
 # ═══════════════════════════════════════════════════════════════════
 # TEST 8: PERFORMANCE BENCHMARK
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestPerformance:
     """
@@ -551,9 +574,7 @@ class TestPerformance:
             for t in range(100):
                 state = rng.uniform(-100000, 100000, 4)
                 cov = np.diag(rng.uniform(50, 200, 4))
-                tracks.append(NetworkTrack(
-                    f"{nid}:{t}", nid, state, cov, 0.0
-                ))
+                tracks.append(NetworkTrack(f"{nid}:{t}", nid, state, cov, 0.0))
             nm.submit_tracks(nid, tracks, current_time=0.0)
 
         # Time the fusion

@@ -2,7 +2,7 @@
   <img src="docs/images/radarsim_logo.svg" alt="RadarSim Logo" width="200"/>
 </p>
 
-<h1 align="center">RadarSim v1.0</h1>
+<h1 align="center">RadarSim v2.4.0</h1>
 
 <p align="center">
   <b>Professional Pulse-Doppler Radar Simulation Platform</b><br>
@@ -23,6 +23,7 @@
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License"/>
   <img src="https://img.shields.io/badge/version-2.4.0-gold?style=flat-square" alt="v2.4.0"/>
   <img src="https://img.shields.io/badge/tests-217%20passed-brightgreen?style=flat-square" alt="217 tests"/>
+  <img src="https://img.shields.io/badge/Project_Evolution-Phase_30-ff69b4?style=flat-square" alt="Phase 30"/>
 </p>
 
 ---
@@ -30,6 +31,14 @@
 ## 📖 Overview
 
 **RadarSim** is a scientifically-validated radar simulation engine for education, research, and professional training. Built with NumPy/Numba for performance and PyQt6 for a modern UI.
+
+### 🔬 Scientific Core
+- **Pulse-Doppler Engine:** Signal-level processing (CPI, MTI, FFT) referenced from Richards (2005).
+- **Advanced Tracking:** Extended Kalman Filter (EKF) with polar coordinates.
+- **Electronic Warfare:** DRFM Jamming (RGPO/VGPO) and Frequency Agility.
+- **Sensor Fusion:** Networked Radar & Strobe Triangulation.
+- **Imaging:** High-resolution SAR/ISAR algorithms.
+- **AI/Cognitive Control:** Dynamic logic referenced from Haykin (2006).
 
 **Key Validation:** Radar Equation calculations achieve ±0.005 dB accuracy vs. Skolnik reference values.
 

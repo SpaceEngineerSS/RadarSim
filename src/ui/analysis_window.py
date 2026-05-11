@@ -5,10 +5,7 @@ Standalone window for post-flight analysis.
 Opens when loading HDF5 recording files.
 """
 
-from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
 from .analysis_panel import AnalysisPanel

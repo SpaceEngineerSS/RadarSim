@@ -22,8 +22,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QRadialGradient
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 # MIL-STD-2525 Symbology
 try:
@@ -149,7 +149,7 @@ class PPIScope(QWidget):
     def _setup_ui(self):
         """Setup the UI components."""
         self.setMinimumSize(500, 500)
-        self.setStyleSheet(f"background-color: rgb(5, 15, 10);")
+        self.setStyleSheet("background-color: rgb(5, 15, 10);")
 
         # Create pyqtgraph plot widget
         pg.setConfigOptions(antialias=True, background="k")

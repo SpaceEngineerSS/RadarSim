@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Gelişmiş Sensör Füzyonu Modülü
 
@@ -17,13 +18,10 @@ Algoritmalar:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-import numba
 import numpy as np
-import scipy.stats as stats
-from numba import jit
-from scipy.linalg import cholesky, inv
+from scipy.linalg import inv
 
 
 @dataclass
@@ -462,6 +460,7 @@ class AdvancedSensorFusion:
         """Basitleştirilmiş neural fusion network"""
         # Basit weighted average (gerçek uygulamada CNN/RNN kullanılır)
         from scipy.special import softmax
+
         weights = softmax(sensor_data[:, -1])  # Confidence-based weights
         fused_features = np.average(sensor_data[:, :-1], weights=weights, axis=0)
 
@@ -545,4 +544,3 @@ try:
     )
 except ImportError:
     pass
-

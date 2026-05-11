@@ -1,3 +1,4 @@
+# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
 """
 Gelişmiş LPI (Low Probability of Intercept) Radar Modülü
 
@@ -17,12 +18,10 @@ LPI Teknikleri:
 - Polyphase Codes
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Tuple
 
-import numba
 import numpy as np
 import scipy.signal as signal
-from numba import jit
 from scipy.constants import c
 
 

@@ -18,7 +18,7 @@ Usage:
 
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Iterator, List, Optional
+from typing import Iterator, List
 
 import numpy as np
 
