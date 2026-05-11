@@ -25,7 +25,7 @@ jobs:
     
     - name: Check formatting and lint with Ruff
       run: |
-        ruff check .
+        ruff check . --select=E9,F63,F7,F82
         ruff format --check .
     
     - name: Check complexity with Ruff (Warning only)

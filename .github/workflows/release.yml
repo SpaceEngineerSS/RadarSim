@@ -45,7 +45,7 @@ jobs:
         nuitka-version: main
         script-name: run_gui.py
         mode: onefile
-        plugin-enable: pyside6,numpy
+        enable-plugins: pyside6,numpy
         output-file: RadarSim
 
     - name: Package Windows
