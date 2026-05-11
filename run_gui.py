@@ -2,7 +2,7 @@
 """
 RadarSim - Professional Radar Operator Console
 
-Launch the modern PyQt6-based radar simulation GUI.
+Launch the modern PySide6-based radar simulation GUI.
 
 Usage:
     python run_gui.py
@@ -47,11 +47,11 @@ def main():
 
     # Check dependencies
     try:
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
-        print("✓ PyQt6 OK")
+        print("✓ PySide6 OK")
     except ImportError:
-        print("✗ PyQt6 not installed. Run: pip install PyQt6")
+        print("✗ PySide6 not installed. Run: pip install PySide6")
         return 1
 
     try:
@@ -96,7 +96,7 @@ def main():
     app.setStyle("Fusion")
 
     # Apply dark theme palette
-    from PyQt6.QtGui import QColor, QPalette
+    from PySide6.QtGui import QColor, QPalette
 
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(10, 25, 15))

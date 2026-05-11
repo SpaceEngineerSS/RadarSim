@@ -15,9 +15,9 @@ Reference: Oliver & Quegan, "Understanding SAR Images", IEEE Press, 1998
 from typing import Dict, List, Optional
 
 import numpy as np
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QGridLayout,
@@ -623,4 +623,4 @@ class SARViewer(QDialog):
 
 
 # Need to import QColor for the plot widget
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor

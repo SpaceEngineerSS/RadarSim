@@ -5,7 +5,7 @@ Professional radar simulation with:
 - 3D radar physics (ITU-R P.676, Swerling RCS)
 - Target tracking and simulation
 - ECM/ECCM simulation
-- Modern PyQt6 visualization
+- Modern PySide6 visualization
 """
 
 # Re-export from modern subpackages

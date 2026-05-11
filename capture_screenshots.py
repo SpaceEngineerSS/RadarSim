@@ -16,9 +16,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QScreen
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QScreen
+from PySide6.QtWidgets import QApplication
 
 
 def capture_screenshots():

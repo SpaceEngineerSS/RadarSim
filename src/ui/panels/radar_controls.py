@@ -9,8 +9,8 @@ Architecture: Single-responsibility component for radar control UI.
 
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,

@@ -7,7 +7,7 @@ matplotlib>=3.4.0
 numba>=0.56.0
 
 # GUI Framework (Required)
-PyQt6>=6.0.0
+PySide6>=6.0.0
 pyqtgraph>=0.13.0
 
 # Data Storage & Config

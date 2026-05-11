@@ -18,9 +18,9 @@ from typing import Any, Dict
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 
 class AScope(QWidget):
@@ -279,7 +279,7 @@ class AScope(QWidget):
         self.ref_region_right.setVisible(False)
         self.cfar_label.setText("Hover over plot to see CFAR cells")
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def update_display(self, state: Dict[str, Any]):
         """
         Update display with new simulation state.

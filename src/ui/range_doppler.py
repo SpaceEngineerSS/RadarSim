@@ -20,7 +20,7 @@ Reference: Richards, "Fundamentals of Radar Signal Processing", 2nd Ed., Ch. 4
 Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 
 Migration Note: Ported from gui/widgets/range_doppler.py with
-    PyQt6 modernization, SimulationState integration, and Phase 26
+    PySide6 modernization, SimulationState integration, and Phase 26
     pulse-Doppler signal-level processing support.
 """
 
@@ -28,9 +28,9 @@ import time
 from typing import Any, Dict, List
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 try:
     import pyqtgraph as pg
@@ -215,7 +215,7 @@ class RangeDopplerScope(QWidget):
         self.image_item.setLookupTable(self.lookup_table)
 
         # Set transform to match coordinate system
-        from PyQt6.QtGui import QTransform
+        from PySide6.QtGui import QTransform
 
         transform = QTransform()
         transform.scale(
@@ -302,7 +302,7 @@ class RangeDopplerScope(QWidget):
         self.plot_widget.addItem(notch_region)
         self._mti_notch_fill = notch_region
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def update_display(self, state: Dict[str, Any]):
         """
         Update display with new simulation state.
@@ -603,7 +603,7 @@ class RangeDopplerScope(QWidget):
 
     def _update_transform(self):
         """Update image transform after range/velocity change."""
-        from PyQt6.QtGui import QTransform
+        from PySide6.QtGui import QTransform
 
         transform = QTransform()
         transform.scale(

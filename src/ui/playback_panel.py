@@ -16,8 +16,8 @@ Signals:
     speed_changed(float): Emitted when speed control changes
 """
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
@@ -38,11 +38,11 @@ class PlaybackPanel(QWidget):
     """
 
     # Signals
-    file_load_requested = pyqtSignal(str)  # filepath
-    time_changed = pyqtSignal(float)  # time in seconds
-    play_state_changed = pyqtSignal(bool)  # is_playing
-    speed_changed = pyqtSignal(float)  # speed multiplier
-    stop_requested = pyqtSignal()  # stop and reset
+    file_load_requested = Signal(str)  # filepath
+    time_changed = Signal(float)  # time in seconds
+    play_state_changed = Signal(bool)  # is_playing
+    speed_changed = Signal(float)  # speed multiplier
+    stop_requested = Signal()  # stop and reset
 
     # Speed options
     SPEEDS = [0.25, 0.5, 1.0, 2.0, 5.0]

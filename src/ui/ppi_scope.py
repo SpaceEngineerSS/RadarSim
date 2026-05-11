@@ -21,9 +21,9 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 # MIL-STD-2525 Symbology
 try:
@@ -80,7 +80,7 @@ class PPIScope(QWidget):
     """
 
     # Signals
-    target_selected = pyqtSignal(int)  # Emits target_id when clicked
+    target_selected = Signal(int)  # Emits target_id when clicked
 
     # Color scheme (military/cyberpunk) - MIL-STD-2525 compliant
     COLOR_BACKGROUND = QColor(5, 15, 10)
@@ -306,7 +306,7 @@ class PPIScope(QWidget):
             label.setFont(QFont("Consolas", 9))
             self.plot_widget.addItem(label)
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def update_display(self, state: Dict[str, Any]):
         """
         Update display with new simulation state.

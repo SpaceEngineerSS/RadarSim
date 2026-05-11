@@ -24,9 +24,9 @@ Architecture: Model-View-Controller (MVC)
 from enum import Enum
 from typing import Optional
 
-from PyQt6.QtCore import QSettings, Qt, pyqtSlot
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSettings, Qt, Slot
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QMainWindow,
@@ -647,7 +647,7 @@ class MainWindow(QMainWindow):
             self.sim_thread = None
         self.status_bar.showMessage("Simulation STOPPED")
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def _on_update(self, state: dict) -> None:
         """Handle simulation state update."""
         # Route to active display
@@ -684,7 +684,7 @@ class MainWindow(QMainWindow):
             f"TIME: {time_s:.1f}s | TARGETS: {total} | DETECTIONS: {detections}"
         )
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_error(self, error_msg: str) -> None:
         """Handle simulation error."""
         self.status_bar.showMessage(f"ERROR: {error_msg}")
@@ -693,14 +693,14 @@ class MainWindow(QMainWindow):
     # TARGET & ECM HANDLERS
     # ═══════════════════════════════════════════════════════════════════════
 
-    @pyqtSlot(int)
+    @Slot(int)
     def _on_target_selected(self, target_id: int) -> None:
         """Handle target selection from PPI scope."""
         target_data = self._target_data_cache.get(target_id)
         self.target_inspector.update_target(target_data)
         self.status_bar.showMessage(f"TARGET {target_id} SELECTED")
 
-    @pyqtSlot(bool, str, int)
+    @Slot(bool, str, int)
     def _on_ecm_state_changed(
         self, active: bool, ecm_type: str, target_id: int
     ) -> None:
@@ -956,7 +956,7 @@ class MainWindow(QMainWindow):
             self._start_simulation()
 
             # ═══ CRITICAL: Restore UI layout after all changes ═══
-            from PyQt6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication
 
             QApplication.processEvents()  # Let UI fully update
 
@@ -1007,7 +1007,7 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage("MODE: REPLAY")
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_load_recording(self, filepath: str) -> None:
         """Load an HDF5 recording file."""
         try:
@@ -1048,7 +1048,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
 
-    @pyqtSlot(float)
+    @Slot(float)
     def _on_replay_time_changed(self, t: float) -> None:
         """Handle timeline scrubbing in replay mode."""
         if self.mode != SimulationMode.REPLAY or self.replay_loader is None:
@@ -1077,7 +1077,7 @@ class MainWindow(QMainWindow):
             if target_data:
                 self.target_inspector.update_target(target_data)
 
-    @pyqtSlot()
+    @Slot()
     def _on_replay_stopped(self) -> None:
         """Handle replay stop."""
         self.status_bar.showMessage("REPLAY STOPPED")
@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
 
     def _on_save_scenario(self) -> None:
         """Save current simulation state to YAML."""
-        from PyQt6.QtWidgets import QFileDialog, QInputDialog
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
 
         # Get filename
         filepath, _ = QFileDialog.getSaveFileName(

@@ -3,14 +3,14 @@ Simulation Thread Manager
 
 Bridge between simulation loop (background thread) and UI (main thread).
 
-Uses PyQt6 signals/slots for thread-safe communication.
+Uses PySide6 signals/slots for thread-safe communication.
 
 Architecture:
     - SimulationWorker runs engine.step() in a QThread
     - Emits update_data signal with current state
     - UI connects to signal to update visualization
 
-Reference: PyQt6 Threading Best Practices
+Reference: PySide6 Threading Best Practices
 """
 
 import os
@@ -21,7 +21,7 @@ import time
 from typing import Any, Dict, Optional
 
 import numpy as np
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PySide6.QtCore import QObject, QThread, Signal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -43,9 +43,9 @@ class SimulationWorker(QObject):
     """
 
     # Signals (must be class attributes)
-    update_data = pyqtSignal(dict)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    update_data = Signal(dict)
+    finished = Signal()
+    error = Signal(str)
 
     def __init__(
         self,
@@ -327,9 +327,9 @@ class SimulationThread(QThread):
     """
 
     # Forward signals from worker
-    update_data = pyqtSignal(dict)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    update_data = Signal(dict)
+    finished = Signal()
+    error = Signal(str)
 
     def __init__(
         self,

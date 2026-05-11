@@ -11,8 +11,8 @@ import time
 from typing import Any, Dict, Optional
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -49,7 +49,7 @@ class TargetInspector(QWidget):
     """
 
     # Signal emitted when ECM state changes (active, ecm_type, target_id)
-    ecm_changed = pyqtSignal(bool, str, int)
+    ecm_changed = Signal(bool, str, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)

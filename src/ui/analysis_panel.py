@@ -12,8 +12,8 @@ Integrates with ReplayLoader to display historical data.
 from typing import Optional
 
 import numpy as np
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 try:
     import pyqtgraph as pg

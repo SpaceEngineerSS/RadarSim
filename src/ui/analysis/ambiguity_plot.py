@@ -14,9 +14,9 @@ Reference:
 """
 
 import numpy as np
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -363,7 +363,7 @@ class AmbiguityPlot(QWidget):
 if __name__ == "__main__":
     import sys
 
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
     widget = AmbiguityPlot()

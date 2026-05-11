@@ -9,9 +9,9 @@ Features:
     - Version and branding display
 """
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
-from PyQt6.QtWidgets import QSplashScreen
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
+from PySide6.QtWidgets import QSplashScreen
 
 
 class RadarSimSplash(QSplashScreen):
