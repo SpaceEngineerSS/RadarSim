@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from src.signal.antenna_pattern import AntennaPattern
-from src.signal.pulse_doppler import PulseDopplerProcessor, RangeDopplerMap
+from src.signal.pulse_doppler import C_LIGHT, PulseDopplerProcessor
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
@@ -84,6 +84,33 @@ class TestMatchedFilterGain:
     def test_processing_gain_positive(self, xband_processor):
         """Processing gain must be positive (BT > 1)."""
         assert xband_processor.processing_gain_db > 0.0
+
+    def test_raw_iq_contains_delayed_lfm_and_matched_filter_peak(self, xband_processor):
+        target_range = 6000.0
+        raw = xband_processor.generate_cpi(
+            np.array([target_range]),
+            np.array([0.0]),
+            np.array([1.0]),
+            noise_power=0.0,
+        )
+        delay = round(target_range / xband_processor.range_sample_spacing_m)
+        pulse_samples = len(xband_processor._ref_chirp)
+        assert np.count_nonzero(np.abs(raw[0]) > 0.0) == pulse_samples
+        assert np.sum(np.abs(raw[0]) ** 2) == pytest.approx(pulse_samples)
+
+        compressed = xband_processor.range_compress(raw)
+        assert np.argmax(np.abs(compressed[0])) == delay
+        assert np.abs(compressed[0, delay]) == pytest.approx(
+            np.sqrt(pulse_samples), rel=1e-12
+        )
+
+    def test_nominal_amplitude_maps_to_requested_processed_snr(self, xband_processor):
+        amplitude = xband_processor.amplitude_for_output_snr(100.0, noise_power=2.0)
+        expected = 100.0 * 2.0
+        assert (
+            amplitude**2 * xband_processor.nominal_processing_gain_linear
+            == pytest.approx(expected)
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -266,6 +293,39 @@ class TestTargetLocalization:
         assert flat[peak1_flat] > flat.mean() + 20, "First target not resolved"
         assert flat[peak2_flat] > flat.mean() + 10, "Second target not resolved"
 
+    def test_second_trip_range_folds_by_unambiguous_range(self, xband_processor):
+        apparent_range = 6000.0
+        true_range = xband_processor.max_unambiguous_range_m + apparent_range
+        rd = xband_processor.process_cpi(
+            np.array([true_range]),
+            np.array([0.0]),
+            np.array([1.0]),
+            noise_power=0.0,
+        )
+        peak = np.unravel_index(np.argmax(rd.data_linear), rd.data_linear.shape)
+        assert rd.range_axis_m[peak[1]] == pytest.approx(
+            apparent_range, abs=xband_processor.range_sample_spacing_m
+        )
+
+    def test_velocity_above_nyquist_folds_to_prf_interval(self, xband_processor):
+        true_velocity = 20.0
+        ambiguity_period = xband_processor.wavelength_m * xband_processor.prf_hz / 2.0
+        expected = (
+            (true_velocity + ambiguity_period / 2.0) % ambiguity_period
+            - ambiguity_period / 2.0
+        )
+        rd = xband_processor.process_cpi(
+            np.array([6000.0]),
+            np.array([true_velocity]),
+            np.array([1.0]),
+            noise_power=0.0,
+        )
+        peak = np.unravel_index(np.argmax(rd.data_linear), rd.data_linear.shape)
+        bin_width = xband_processor.wavelength_m * xband_processor.prf_hz / (
+            2.0 * xband_processor.n_pulses
+        )
+        assert rd.velocity_axis_mps[peak[0]] == pytest.approx(expected, abs=bin_width)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 4: BLIND SPEED CALCULATION
@@ -401,6 +461,35 @@ class TestRangeDopplerMap:
         rd1 = xband_processor.process_cpi(**args)
         rd2 = xband_processor.process_cpi(**args)
         assert np.allclose(rd1.data_db, rd2.data_db), "R-D maps not reproducible"
+
+    def test_axes_follow_sample_rate_and_fftfreq(self):
+        processor = PulseDopplerProcessor(
+            prf_hz=1000.0,
+            n_pulses=64,
+            n_range_bins=512,
+            bandwidth_hz=5e6,
+            sample_rate_hz=10e6,
+            pulse_width_s=10e-6,
+            frequency_hz=10e9,
+            mti_order=1,
+            window_type="hann",
+        )
+        rd = processor.process_cpi(
+            np.array([]), np.array([]), np.array([]), noise_power=0.0
+        )
+        assert rd.range_axis_m[1] == pytest.approx(C_LIGHT / (2.0 * 10e6))
+        expected_doppler = np.fft.fftshift(np.fft.fftfreq(63, d=1.0 / 1000.0))
+        np.testing.assert_allclose(rd.doppler_axis_hz, expected_doppler)
+
+    def test_window_enbw_matches_periodic_hann(self):
+        window = PulseDopplerProcessor._generate_window(64, "hann")
+        assert PulseDopplerProcessor.window_enbw_bins(window) == pytest.approx(1.5)
+
+    def test_invalid_sampling_and_duty_cycle_are_rejected(self):
+        with pytest.raises(ValueError, match="sample_rate_hz"):
+            PulseDopplerProcessor(bandwidth_hz=5e6, sample_rate_hz=4e6)
+        with pytest.raises(ValueError, match="PRI"):
+            PulseDopplerProcessor(prf_hz=1000.0, pulse_width_s=1e-3)
 
 
 # ═══════════════════════════════════════════════════════════════════

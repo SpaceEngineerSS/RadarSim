@@ -1,47 +1,30 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# For the full list of built-in configuration values, see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
+from __future__ import annotations
 
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath("../.."))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# -- Project information -----------------------------------------------------
 project = "RadarSim"
-copyright = "2025, RadarSim Contributors"
+copyright = "2026, RadarSim Contributors"
 author = "RadarSim Contributors"
-release = "1.0.0"
+release = "3.0.0"
 
-# -- General configuration ---------------------------------------------------
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
-    "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
 ]
 
-templates_path = ["_templates"]
-exclude_patterns = []
-
-# -- Options for HTML output -------------------------------------------------
+templates_path: list[str] = []
+exclude_patterns = ["_build"]
 html_theme = "sphinx_rtd_theme"
-html_static_path = ["_static"]
+html_static_path: list[str] = []
 
-# -- Extension configuration -------------------------------------------------
-# Napoleon settings
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = True
-
-# Intersphinx mapping
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "numpy": ("https://numpy.org/doc/stable/", None),
-}
-
-# Autodoc settings
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
+autodoc_mock_imports = ["PySide6", "pyqtgraph", "OpenGL"]

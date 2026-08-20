@@ -526,7 +526,7 @@ def validate_los_physics() -> dict:
         },
         "horizon_range_km": horizon_range / 1000,
         "validation": {
-            "high_target_correct": visible_high == True,
-            "flat_terrain_correct": visible_flat == True,
+            "high_target_correct": bool(visible_high),
+            "flat_terrain_correct": bool(visible_flat),
         },
     }

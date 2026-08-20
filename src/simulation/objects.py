@@ -189,6 +189,14 @@ class Target:
         jammer_power_watts: float = 1000.0,
         jammer_bandwidth_hz: float = 100e6,
         ecm_type: str = "noise_barrage",
+        drfm_gain_over_skin_db: float = 10.0,
+        drfm_capture_dwell_s: float = 2.0,
+        drfm_pull_rate_mps: float = 50.0,
+        drfm_max_pull_m: float = 2000.0,
+        drfm_mode: str = "rgpo",
+        drfm_vgpo_rate_hz_per_s: float = 50.0,
+        drfm_max_doppler_pull_hz: float = 500.0,
+        drfm_inherent_delay_s: float = 0.0,
     ):
         """
         Initialize target.
@@ -223,6 +231,23 @@ class Target:
         self.jammer_bandwidth_hz = jammer_bandwidth_hz
         self.ecm_type = ecm_type
         self.jammer_active = has_jammer  # Active by default if equipped
+        drfm_mode = drfm_mode.lower()
+        if drfm_mode not in {"rgpo", "vgpo"}:
+            raise ValueError("drfm_mode must be 'rgpo' or 'vgpo'")
+        if drfm_capture_dwell_s < 0.0 or drfm_inherent_delay_s < 0.0:
+            raise ValueError("DRFM timing parameters cannot be negative")
+        if drfm_pull_rate_mps < 0.0 or drfm_vgpo_rate_hz_per_s < 0.0:
+            raise ValueError("DRFM pull rates cannot be negative")
+        if drfm_max_pull_m <= 0.0 or drfm_max_doppler_pull_hz <= 0.0:
+            raise ValueError("DRFM maximum offsets must be positive")
+        self.drfm_gain_over_skin_db = drfm_gain_over_skin_db
+        self.drfm_capture_dwell_s = drfm_capture_dwell_s
+        self.drfm_pull_rate_mps = drfm_pull_rate_mps
+        self.drfm_max_pull_m = drfm_max_pull_m
+        self.drfm_mode = drfm_mode
+        self.drfm_vgpo_rate_hz_per_s = drfm_vgpo_rate_hz_per_s
+        self.drfm_max_doppler_pull_hz = drfm_max_doppler_pull_hz
+        self.drfm_inherent_delay_s = drfm_inherent_delay_s
 
         # Initialize kinematic state
         if velocity is None:
@@ -341,6 +366,14 @@ class Target:
             "jammer_power_watts": self.jammer_power_watts,
             "jammer_bandwidth_hz": self.jammer_bandwidth_hz,
             "ecm_type": self.ecm_type,
+            "drfm_gain_over_skin_db": self.drfm_gain_over_skin_db,
+            "drfm_capture_dwell_s": self.drfm_capture_dwell_s,
+            "drfm_pull_rate_mps": self.drfm_pull_rate_mps,
+            "drfm_max_pull_m": self.drfm_max_pull_m,
+            "drfm_mode": self.drfm_mode,
+            "drfm_vgpo_rate_hz_per_s": self.drfm_vgpo_rate_hz_per_s,
+            "drfm_max_doppler_pull_hz": self.drfm_max_doppler_pull_hz,
+            "drfm_inherent_delay_s": self.drfm_inherent_delay_s,
         }
 
 
@@ -475,7 +508,7 @@ class Radar:
 
         # Azimuth and elevation
         azimuth = np.arctan2(delta[1], delta[0])  # East from North
-        elevation = np.arctan2(-delta[2], np.sqrt(delta[0] ** 2 + delta[1] ** 2))
+        elevation = np.arctan2(delta[2], np.sqrt(delta[0] ** 2 + delta[1] ** 2))
 
         # Radial velocity (if target has velocity)
         radial_velocity = 0.0

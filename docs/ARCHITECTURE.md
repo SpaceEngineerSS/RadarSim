@@ -1,85 +1,53 @@
-# System Architecture
+# Architecture
 
-## Overview
+RadarSim separates physical models, time evolution, estimation, file formats, and presentation so that headless studies do not depend on the desktop UI.
 
-RadarSim is designed as a modular, high-performance radar simulation platform. It separates core physics calculations (using Numba/SciPy) from the real-time simulation loop and the PyQt6-based user interface.
+```text
+scenario YAML/JSON
+        |
+        v
+src.io.scenario_loader
+        |
+        v
+src.simulation.engine ----> detections ----> src.tracking
+   |       |       |                            |
+   |       |       +---- src.physics.ecm        v
+   |       +------------ src.physics.*     network/fusion
+   +-------------------- radar/targets
+        |
+        +---- recording/export/replay
+        +---- PySide6 UI views
 
-## Directory Structure
-
-The `src/` directory is organized by domain:
-
-```
-src/
-├── physics/          # Core Physics Engine
-│   ├── radar_equation.py   # SNR, Range, Power calculations (Numba)
-│   ├── atmospheric.py      # ITU-R P.676 Attenuation
-│   ├── clutter.py          # Grund/Sea (GIT)/Rain models
-│   ├── rcs.py              # Swerling fluctuation models
-│   └── terrain.py          # 4/3 Earth & LOS Raymarching
-│
-├── signal/           # Signal Processing Chain
-│   ├── cfar.py             # CA/GO/SO-CFAR Detectors
-│   ├── waveforms.py        # LFM Chirp generation
-│   └── doppler.py          # Doppler shift & Aliasing
-│
-├── tracking/         # Target Tracking
-│   ├── kalman.py           # Linear/Extended Kalman Filters
-│   └── monopulse.py        # Sum/Difference pattern logic
-│
-├── simulation/       # Simulation Runtime
-│   ├── engine.py           # Main simplified simulation loop
-│   ├── thread_manager.py   # QThread management
-│   └── scenario.py         # Scenario state management
-│
-├── ui/               # User Interface (PyQt6)
-│   ├── main_window.py      # Application entry
-│   ├── scopes/             # Radar displays (PPI, RHI, A-Scope)
-│   ├── panels/             # Control panels & Dashboards
-│   └── analysis/           # Analysis tools (ROC, Ambiguity)
-│
-├── ml/               # AI Classification
-│   ├── inference_engine.py # Real-time Random Forest inference
-│   └── dataset_generator.py# Synthetic training data gen
-│
-├── advanced/         # Advanced Modules
-│   ├── sar_isar.py         # Synthetic Aperture Radar imaging
-│   └── fusion.py           # Sensor fusion stub
-│
-└── io/               # Input/Output
-    └── exporter.py         # Data export utilities
+raw complex samples ----> src.signal ----> range-Doppler/CFAR
+point-scatterer scenes --> src.advanced.sar_isar --> imagery
 ```
 
-## Key Components
+## Package responsibilities
 
-### 1. Physics Engine (`src/physics`)
-The physics engine is stateless and purely functional where possible. Critical functions (like the radar equation loop) are JIT-compiled using Numba for near-C++ performance.
+`src.physics` contains constants, radar equation and detection functions, ITU-R propagation, RCS fluctuation, clutter, terrain, antenna-related physics, and ECM link/nonlinearity models. These modules should not import UI code.
 
-### 2. Simulation Loop (`src/simulation`)
-The 'Engine' runs on a separate QThread. It acts as the central clock, updating target positions, calculating detections, and emitting signals to the UI.
+`src.simulation` owns radar and target state, discrete-time stepping, detections, ECM integration, receiver diagnostics, track/network orchestration, and deterministic event timing.
 
-### 3. User Interface (`src/ui`)
-The UI is event-driven.
-- **Visualizations**: Use `pyqtgraph` for high-performance plotting (PPI, B-Scope).
-- **3D Map**: Uses a dedicated OpenGL widget for terrain visualization.
+`src.signal` owns sampled waveform generation, pulse-Doppler processing, CFAR, antenna patterns, and ambiguity-related calculations. Arrays are NumPy arrays and complex baseband uses `complex128` unless a caller deliberately converts it.
 
-### 4. Machine Learning (`src/ml`)
-A lightweight inference pipeline that runs alongside the tracking loop. It classifies tracks based on feature vectors extracted from the physics engine (RCS, Velocity, SNR).
+`src.tracking` owns linear and extended Kalman filters, global measurement-to-track association, track lifecycle, monopulse estimation, and guidance utilities. State and covariance timestamps must refer to the same epoch.
 
-## Technologies
+`src.advanced` contains SAR/ISAR imaging, multisensor fusion, recording analysis, bistatic geometry, and compatibility facades. “Advanced” is a package boundary, not a claim that every literature algorithm is implemented.
 
-- **Language**: Python 3.10+
-- **GUI Framework**: PyQt6
-- **Numeric Computing**: NumPy, SciPy
-- **Acceleration**: Numba (JIT)
-- **Plotting**: PyQtGraph, Matplotlib
-- **Machine Learning**: Scikit-Learn
+`src.io` parses scenarios and handles recording, replay, and export. Loaders validate scalar domains before constructing simulation objects.
 
-## Data Flow
+`src.ui` contains PySide6 windows, panels, scopes, and worker threads. UI calculations call the same scientific APIs as the headless engine; they should not duplicate approximate formulas.
 
-1.  **Input**: User loads a YAML scenario file.
-2.  **Update**: Engine advances target positions (kinematics).
-3.  **Physics**: Engine calculates SNR for each target (Radar Eq + Losses).
-4.  **Detection**: CFAR thresholding determines detections.
-5.  **Tracking**: Detections are fed into Kalman Filters.
-6.  **Classification**: Tracker output is fed into ML Inference.
-7.  **Display**: UI updates scopes at 30-60 Hz.
+## Simulation step
+
+At each engine step, target kinematics and active ECM states advance using the configured `dt`. For each target, the engine determines geometry, line of sight, fluctuated RCS, propagation loss, echo power, noise/clutter/interference, receiver limiting, SNR/SJNR, detection probability, and a stochastic detection. Measurements update the tracker at simulation time. UI and recording consumers receive snapshots rather than owning model state.
+
+## Tracking and fusion timing
+
+Local tracks predict to the measurement timestamp before gating and update. The Mahalanobis cost matrix is gated by a chi-square/NIS threshold and solved globally with the Hungarian algorithm. Confirmation requires consecutive hits; coasting and deletion use explicit missed-update counts.
+
+Network messages are deep-copied into a latency queue. Ready tracks propagate with a constant-velocity state transition to the fusion time. Estimates with unknown cross-correlation use covariance intersection; explicitly independent Gaussian measurements use information-form fusion. These paths are separate to prevent accidental overconfidence.
+
+## Extension rules
+
+New physical models belong in the lowest package that can express them without UI dependencies. Public inputs need unit-bearing names and validation. State-changing objects must take simulation time or `dt` explicitly. Randomized APIs should accept a generator or preserve/restore global state in validation helpers. File-format changes require round-trip tests and a compatibility note in the changelog.

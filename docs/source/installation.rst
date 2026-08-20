@@ -1,31 +1,24 @@
 Installation
 ============
 
-Requirements
-------------
+RadarSim supports CPython 3.9 through 3.12. Use a virtual environment.
 
-RadarSim requires Python 3.9+ and the following dependencies:
-
-.. code-block:: bash
-
-   pip install -r requirements.txt
-
-Dependencies:
-
-* numpy>=1.20.0
-* scipy>=1.7.0
-* numba>=0.56.0
-* PyQt6>=6.0.0
-* pyqtgraph>=0.13.0
-* h5py>=3.7.0
-* pyyaml>=6.0.0
-
-Quick Installation
-------------------
-
-.. code-block:: bash
+.. code-block:: console
 
    git clone https://github.com/SpaceEngineerSS/RadarSim.git
    cd RadarSim
-   pip install -r requirements.txt
-   python run_gui.py
+   python -m venv .venv
+   python -m pip install --upgrade pip
+   python -m pip install -e ".[gui]"
+
+Install development and documentation tools with:
+
+.. code-block:: console
+
+   python -m pip install -e ".[gui,dev,docs]"
+
+Run the installed application with ``radarsim``. From a source checkout,
+``python run_gui.py`` uses the same entry point.
+
+The core dependency set is NumPy, SciPy, Numba, h5py, and PyYAML. The GUI
+extra adds PySide6, pyqtgraph, Matplotlib, and PyOpenGL.

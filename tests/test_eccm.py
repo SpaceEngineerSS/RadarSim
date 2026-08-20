@@ -34,7 +34,6 @@ from src.physics.ecm import (
     ECMSimulator,
 )
 from src.tracking.ekf import ExtendedKalmanFilter
-from src.tracking.kalman import KalmanState
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 1: DRFM JAMMER STATE MACHINE
@@ -396,7 +395,7 @@ class TestEKFCoastMode:
         state = ekf.predict(state, dt=1.0)
 
         # Update with heavy jamming (J/S = 30 dB)
-        state_coasted = ekf.update_with_jsr(
+        ekf.update_with_jsr(
             state, z_polar=(11000.0, 0.5), snr_db=20.0, jsr_db=30.0
         )
 
@@ -409,7 +408,7 @@ class TestEKFCoastMode:
         state = ekf.initialize(position=(10000.0, 5000.0), velocity=(100.0, 50.0))
         state = ekf.predict(state, dt=1.0)
 
-        state_updated = ekf.update_with_jsr(
+        ekf.update_with_jsr(
             state, z_polar=(11000.0, 0.5), snr_db=20.0, jsr_db=-100.0
         )
 
@@ -507,7 +506,7 @@ class TestSJNR:
     def test_equal_jsr_and_snr(self):
         """When JSR = SNR, SJNR = SNR - 10·log₁₀(2) ≈ SNR - 3.01 dB."""
         sjnr = ExtendedKalmanFilter._calculate_sjnr(20.0, 20.0)
-        expected = 20.0 - 10 * np.log10(1 + 10 ** (20.0 / 10))
+        expected = -10.0 * np.log10(10.0**-2 + 10.0**2)
         assert abs(sjnr - expected) < 0.01
 
     def test_high_jamming(self):

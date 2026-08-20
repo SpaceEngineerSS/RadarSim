@@ -422,6 +422,7 @@ def validate_swerling_distribution(
     mean_rcs: float = 10.0,
     n_samples: int = 10000,
     significance_level: float = 0.05,
+    random_seed: int = 314159,
 ) -> dict:
     """
     Monte Carlo validation of Swerling RCS distributions
@@ -439,16 +440,21 @@ def validate_swerling_distribution(
         mean_rcs: Mean RCS value for testing [m²]
         n_samples: Number of Monte Carlo samples
         significance_level: KS test significance level (p > this to pass)
+        random_seed: Reproducible seed used only by the validation sample
 
     Returns:
         Dict containing validation results and statistics
     """
     from scipy import stats
 
-    # Generate samples
-    samples = np.array(
-        [SwerlingRCS.generate_rcs(mean_rcs, model) for _ in range(n_samples)]
-    )
+    random_state = np.random.get_state()
+    np.random.seed(random_seed)
+    try:
+        samples = np.array(
+            [SwerlingRCS.generate_rcs(mean_rcs, model) for _ in range(n_samples)]
+        )
+    finally:
+        np.random.set_state(random_state)
 
     if model == SwerlingModel.SWERLING_0:
         # Non-fluctuating: all samples should equal mean_rcs

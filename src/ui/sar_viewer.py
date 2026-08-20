@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -37,7 +37,7 @@ try:
 except ImportError:
     PYQTGRAPH_AVAILABLE = False
 
-# Import real SAR physics engine (Phase 25)
+# SAR processing engine
 try:
     from src.advanced.sar_isar import AdvancedSARISAR
 
@@ -73,6 +73,7 @@ class SARViewer(QDialog):
 
         # State
         self.image_data: Optional[np.ndarray] = None
+        self._image_db: Optional[np.ndarray] = None
         self.quality_metrics: Dict[str, float] = {}
 
         # Real simulation data (set externally via set_simulation_data)
@@ -283,18 +284,23 @@ class SARViewer(QDialog):
         if data is None or not PYQTGRAPH_AVAILABLE:
             return
 
+        data = np.asarray(data)
+        if data.ndim != 2 or data.size == 0 or not np.all(np.isfinite(data)):
+            raise ValueError("SAR image must be a finite non-empty 2-D array")
         self.image_data = data
-
-        # Convert to dB scale for display
-        data_db = 20 * np.log10(np.abs(data) + 1e-10)
-        data_db = np.clip(data_db, -60, 0)  # Clip to reasonable range
-
-        # Normalize to 0-1
-        data_norm = (data_db + 60) / 60
+        magnitude = np.abs(data)
+        peak = float(magnitude.max())
+        if peak > 0.0:
+            self._image_db = np.maximum(
+                20.0 * np.log10(np.maximum(magnitude / peak, 1e-12)), -80.0
+            )
+        else:
+            self._image_db = np.full(magnitude.shape, -80.0)
+        data_norm = (self._image_db + 80.0) / 80.0
 
         # Update image
         self.image_item.setImage(data_norm.T, autoLevels=False)
-        self.image_item.setLevels([0, 1])
+        self._apply_display_levels()
 
         # Update metrics
         if metrics:
@@ -305,12 +311,15 @@ class SARViewer(QDialog):
         """Update the metrics labels."""
         snr = self.quality_metrics.get("SNR_dB", 0)
         contrast = self.quality_metrics.get("Contrast", 0)
-        resolution = self.quality_metrics.get("Resolution_m", 0)
-        peak = self.quality_metrics.get("Peak_dB", 0)
+        range_resolution = self.quality_metrics.get("Range_Resolution_m", 0)
+        azimuth_resolution = self.quality_metrics.get("Azimuth_Resolution_m", 0)
+        peak = self.quality_metrics.get("Peak_dB", 0.0)
 
         self.snr_label.setText(f"SNR: {snr:.1f} dB")
         self.contrast_label.setText(f"Contrast: {contrast:.2f}")
-        self.resolution_label.setText(f"Resolution: {resolution:.1f} m")
+        self.resolution_label.setText(
+            f"Resolution: {range_resolution:.2f} × {azimuth_resolution:.2f} m"
+        )
         self.peak_label.setText(f"Peak: {peak:.1f} dB")
 
     def _on_contrast_changed(self, value: int) -> None:
@@ -318,14 +327,20 @@ class SARViewer(QDialog):
         if self.image_item is None:
             return
 
-        # Map slider value to level range
-        max_level = value / 100.0
-        self.image_item.setLevels([0, max_level])
+        self._apply_display_levels()
 
     def _on_brightness_changed(self, value: int) -> None:
         """Handle brightness slider change."""
-        # Brightness adjustment is simulated via level offset
-        pass  # Simplified for now
+        self._apply_display_levels()
+
+    def _apply_display_levels(self) -> None:
+        if self.image_item is None:
+            return
+        contrast = self.contrast_slider.value() / 100.0
+        brightness = self.brightness_slider.value() / 100.0
+        span = 1.5 - 1.3 * contrast
+        center = 0.25 + 0.5 * brightness
+        self.image_item.setLevels([center - span / 2.0, center + span / 2.0])
 
     def set_simulation_data(
         self,
@@ -366,8 +381,8 @@ class SARViewer(QDialog):
         if not SAR_PHYSICS_AVAILABLE or not PYQTGRAPH_AVAILABLE:
             return False
 
-        if len(self._targets) == 0:
-            return False  # No targets, use demo
+        if len(self._targets) == 0 or self._radar_pos is None:
+            return False
 
         try:
             # Extract target positions and RCS values
@@ -383,7 +398,7 @@ class SARViewer(QDialog):
                     target.rcs_mean if hasattr(target, "rcs_mean") else 1.0
                 )
 
-            target_positions = np.array(target_positions)
+            target_positions = np.array(target_positions) - self._radar_pos
             target_rcs = np.array(target_rcs)
 
             # Initialize SAR processor with radar parameters
@@ -405,6 +420,7 @@ class SARViewer(QDialog):
 
             # Calculate image quality metrics
             metrics = sar_processor.calculate_image_quality(sar_image)
+            metrics["Peak_dB"] = 0.0
             metrics["Scene"] = f"{len(self._targets)} Targets"
             metrics["Algorithm"] = "Range-Doppler"
 
@@ -620,7 +636,3 @@ class SARViewer(QDialog):
 
             except Exception as e:
                 print(f"[SAR] Export failed: {e}")
-
-
-# Need to import QColor for the plot widget
-from PySide6.QtGui import QColor

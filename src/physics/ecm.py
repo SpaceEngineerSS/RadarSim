@@ -12,6 +12,7 @@ References:
 
 from dataclasses import dataclass
 from enum import Enum
+from math import erfc, exp, log10, pi, sqrt
 from typing import List, Optional, Tuple
 
 import numba
@@ -57,6 +58,72 @@ class ECMSource:
 
     def __post_init__(self):
         self.position = np.asarray(self.position, dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class ReceiverLimiterResult:
+    """Input-referred result of a memoryless complex-envelope hard limiter."""
+
+    sinr_db: float
+    clipping_loss_db: float
+    input_power_dbm: float
+    headroom_db: float
+    coherent_gain: float
+    distortion_power_watts: float
+    output_power_watts: float
+    overloaded: bool
+
+
+def apply_receiver_hard_limiter(
+    signal_power_watts: float,
+    interference_power_watts: float,
+    full_scale_power_watts: float,
+) -> ReceiverLimiterResult:
+    """Apply a radial hard limiter to a circular complex-Gaussian receiver input."""
+    if signal_power_watts <= 0.0:
+        raise ValueError("signal_power_watts must be positive")
+    if interference_power_watts <= 0.0:
+        raise ValueError("interference_power_watts must be positive")
+    if full_scale_power_watts <= 0.0:
+        raise ValueError("full_scale_power_watts must be positive")
+
+    total_input = signal_power_watts + interference_power_watts
+    clipping_ratio = full_scale_power_watts / total_input
+    input_sinr = signal_power_watts / interference_power_watts
+
+    if clipping_ratio >= 50.0:
+        coherent_gain = 1.0
+        output_power = total_input
+        distortion_power = 0.0
+    else:
+        root_ratio = sqrt(clipping_ratio)
+        tail = exp(-clipping_ratio)
+        coherent_gain = 1.0 - tail + 0.5 * sqrt(pi * clipping_ratio) * erfc(
+            root_ratio
+        )
+        output_power = total_input * (1.0 - tail)
+        distortion_power = max(
+            output_power - coherent_gain**2 * total_input, 0.0
+        )
+
+    output_signal = coherent_gain**2 * signal_power_watts
+    output_interference = (
+        coherent_gain**2 * interference_power_watts + distortion_power
+    )
+    output_sinr = output_signal / output_interference
+    sinr_db = 10.0 * log10(output_sinr)
+    input_sinr_db = 10.0 * log10(input_sinr)
+    headroom_db = 10.0 * log10(clipping_ratio)
+    return ReceiverLimiterResult(
+        sinr_db=sinr_db,
+        clipping_loss_db=max(input_sinr_db - sinr_db, 0.0),
+        input_power_dbm=10.0 * log10(total_input / 1e-3),
+        headroom_db=headroom_db,
+        coherent_gain=coherent_gain,
+        distortion_power_watts=distortion_power,
+        output_power_watts=output_power,
+        overloaded=headroom_db < 0.0,
+    )
 
 
 @dataclass
@@ -429,7 +496,7 @@ class ECMSimulator:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PHASE 28: DRFM JAMMER (Digital Radio Frequency Memory)
+# Digital radio-frequency memory deception
 # ═══════════════════════════════════════════════════════════════════════
 
 C_LIGHT = 299_792_458.0
@@ -468,6 +535,21 @@ class DRFMConfig:
     capture_dwell_s: float = 2.0
     mode: str = "rgpo"  # "rgpo" or "vgpo"
     vgpo_accel_hz_per_s: float = 50.0
+    max_doppler_pull_hz: float = 500.0
+    inherent_delay_s: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.mode = self.mode.lower()
+        if self.mode not in {"rgpo", "vgpo"}:
+            raise ValueError("mode must be 'rgpo' or 'vgpo'")
+        if self.power_watts <= 0.0:
+            raise ValueError("power_watts must be positive")
+        if self.pull_rate_mps < 0.0 or self.vgpo_accel_hz_per_s < 0.0:
+            raise ValueError("pull rates cannot be negative")
+        if self.max_pull_m <= 0.0 or self.max_doppler_pull_hz <= 0.0:
+            raise ValueError("maximum pull offsets must be positive")
+        if self.capture_dwell_s < 0.0 or self.inherent_delay_s < 0.0:
+            raise ValueError("capture dwell and inherent delay cannot be negative")
 
 
 class DRFMJammer:
@@ -563,13 +645,14 @@ class DRFMJammer:
                 # Δτ_step = 2 · pull_rate · dt / c
                 self._pull_offset_m += self.config.pull_rate_mps * dt
                 if self._pull_offset_m >= self.config.max_pull_m:
+                    self._pull_offset_m = self.config.max_pull_m
                     self.state = DRFMState.RELEASE
 
             elif self.config.mode == "vgpo":
                 # VGPO: Increase Doppler offset
                 self._pull_offset_hz += self.config.vgpo_accel_hz_per_s * dt
-                # Max pull at 500 Hz offset (reasonable for X-band)
-                if abs(self._pull_offset_hz) > 500.0:
+                if abs(self._pull_offset_hz) >= self.config.max_doppler_pull_hz:
+                    self._pull_offset_hz = self.config.max_doppler_pull_hz
                     self.state = DRFMState.RELEASE
 
         elif self.state == DRFMState.RELEASE:
@@ -622,7 +705,7 @@ class DRFMJammer:
 
         # Calculate false target position
         if self.config.mode == "rgpo":
-            false_range_m = true_range_m + self._pull_offset_m
+            false_range_m = true_range_m + self.false_range_offset_m
             false_velocity_mps = true_velocity_mps
         else:  # VGPO
             false_range_m = true_range_m
@@ -676,8 +759,13 @@ class DRFMJammer:
     def false_range_offset_m(self) -> float:
         """Range offset of false target from true position [m]."""
         if self.config.mode == "rgpo":
-            return self._pull_offset_m
+            return C_LIGHT * self.config.inherent_delay_s / 2.0 + self._pull_offset_m
         return 0.0
+
+    @property
+    def retransmission_delay_s(self) -> float:
+        """Controlled two-way-equivalent delay applied to the captured pulse [s]."""
+        return self.config.inherent_delay_s + 2.0 * self._pull_offset_m / C_LIGHT
 
     def get_status(self) -> dict:
         """Get jammer status for UI display."""
@@ -687,6 +775,7 @@ class DRFMJammer:
             "active": self.is_active,
             "pull_offset_m": self._pull_offset_m,
             "pull_offset_hz": self._pull_offset_hz,
+            "retransmission_delay_s": self.retransmission_delay_s,
             "power_watts": self.config.power_watts,
         }
 

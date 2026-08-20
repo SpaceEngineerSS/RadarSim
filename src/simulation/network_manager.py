@@ -23,12 +23,14 @@ References:
     - Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 """
 
-from collections import deque
+import copy
+import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.optimize import minimize_scalar
+from scipy.optimize import linear_sum_assignment, minimize, minimize_scalar
+from scipy.stats import chi2
 
 # ═══════════════════════════════════════════════════════════════════════
 # DATA STRUCTURES
@@ -56,6 +58,20 @@ class NetworkTrack:
     timestamp: float
     snr_db: float = 20.0
 
+    def __post_init__(self) -> None:
+        self.state = np.asarray(self.state, dtype=np.float64)
+        self.covariance = np.asarray(self.covariance, dtype=np.float64)
+        if self.state.shape != (4,) or self.covariance.shape != (4, 4):
+            raise ValueError("network tracks require a 4-state vector and 4x4 covariance")
+        if not np.all(np.isfinite(self.state)) or not np.all(
+            np.isfinite(self.covariance)
+        ):
+            raise ValueError("track state and covariance must be finite")
+        if not np.allclose(self.covariance, self.covariance.T, atol=1e-10):
+            raise ValueError("track covariance must be symmetric")
+        if np.any(np.linalg.eigvalsh(self.covariance) <= 0.0):
+            raise ValueError("track covariance must be positive definite")
+
 
 @dataclass
 class StrobeReport:
@@ -75,6 +91,13 @@ class StrobeReport:
     bearing_rad: float
     timestamp: float
     jsr_db: float = 20.0
+
+    def __post_init__(self) -> None:
+        self.radar_position = np.asarray(self.radar_position, dtype=np.float64)
+        if self.radar_position.shape != (2,):
+            raise ValueError("radar_position must contain x and y")
+        if not np.isfinite(self.bearing_rad) or not np.isfinite(self.timestamp):
+            raise ValueError("strobe bearing and timestamp must be finite")
 
 
 @dataclass
@@ -145,8 +168,11 @@ class LatencyModel:
         Args:
             delay_ms: Communication delay [ms]
         """
+        if delay_ms < 0.0:
+            raise ValueError("delay_ms cannot be negative")
         self.delay_s = delay_ms / 1000.0
-        self._queue: deque = deque()
+        self._queue: List[Tuple[float, int, object]] = []
+        self._sequence = 0
 
     def enqueue(self, data: object, timestamp: float) -> None:
         """
@@ -156,7 +182,11 @@ class LatencyModel:
             data: Track/strobe data to delay
             timestamp: Current simulation time [s]
         """
-        self._queue.append((data, timestamp))
+        if not np.isfinite(timestamp):
+            raise ValueError("timestamp must be finite")
+        delivery_time = timestamp + self.delay_s
+        heapq.heappush(self._queue, (delivery_time, self._sequence, data))
+        self._sequence += 1
 
     def dequeue(self, current_time: float) -> List[object]:
         """
@@ -169,8 +199,8 @@ class LatencyModel:
             List of data items ready for consumption
         """
         ready = []
-        while self._queue and (current_time - self._queue[0][1]) >= self.delay_s:
-            data, _ = self._queue.popleft()
+        while self._queue and self._queue[0][0] <= current_time:
+            _, _, data = heapq.heappop(self._queue)
             ready.append(data)
         return ready
 
@@ -226,6 +256,10 @@ class CovarianceIntersection:
 
         Reference: Julier & Uhlmann (1997), Eq. 3-5
         """
+        CovarianceIntersection._validate_estimate(x1, P1)
+        CovarianceIntersection._validate_estimate(x2, P2)
+        if x1.shape != x2.shape:
+            raise ValueError("CI state dimensions must match")
         P1_inv = np.linalg.inv(P1)
         P2_inv = np.linalg.inv(P2)
 
@@ -238,8 +272,9 @@ class CovarianceIntersection:
         # Optimize omega ∈ [0, 1]
         result = minimize_scalar(
             _trace_objective,
-            bounds=(0.001, 0.999),
+            bounds=(0.0, 1.0),
             method="bounded",
+            options={"xatol": 1e-12},
         )
         omega = result.x
 
@@ -252,6 +287,17 @@ class CovarianceIntersection:
         P_fused = 0.5 * (P_fused + P_fused.T)
 
         return x_fused, P_fused, omega
+
+    @staticmethod
+    def _validate_estimate(state: np.ndarray, covariance: np.ndarray) -> None:
+        if state.ndim != 1 or covariance.shape != (state.size, state.size):
+            raise ValueError("state and covariance dimensions do not match")
+        if not np.all(np.isfinite(state)) or not np.all(np.isfinite(covariance)):
+            raise ValueError("state and covariance must be finite")
+        if not np.allclose(covariance, covariance.T, atol=1e-10):
+            raise ValueError("covariance must be symmetric")
+        if np.any(np.linalg.eigvalsh(covariance) <= 0.0):
+            raise ValueError("covariance must be positive definite")
 
     @staticmethod
     def fuse_multiple(
@@ -268,20 +314,52 @@ class CovarianceIntersection:
         Returns:
             (x_fused, P_fused): Fused state and covariance
         """
+        if len(states) != len(covariances):
+            raise ValueError("states and covariances must have equal length")
         if len(states) == 0:
             raise ValueError("Need at least one estimate to fuse")
         if len(states) == 1:
+            CovarianceIntersection._validate_estimate(states[0], covariances[0])
             return states[0].copy(), covariances[0].copy()
+        for state, covariance in zip(states, covariances):
+            CovarianceIntersection._validate_estimate(state, covariance)
+            if state.shape != states[0].shape:
+                raise ValueError("all CI state dimensions must match")
 
-        x_fused = states[0].copy()
-        P_fused = covariances[0].copy()
+        information_matrices = [np.linalg.inv(P) for P in covariances]
 
-        for i in range(1, len(states)):
-            x_fused, P_fused, _ = CovarianceIntersection.fuse_two(
-                x_fused, P_fused, states[i], covariances[i]
+        def objective(weights: np.ndarray) -> float:
+            information = sum(
+                weight * matrix
+                for weight, matrix in zip(weights, information_matrices)
             )
+            return float(np.trace(np.linalg.inv(information)))
 
-        return x_fused, P_fused
+        n_estimates = len(states)
+        initial = np.full(n_estimates, 1.0 / n_estimates)
+        result = minimize(
+            objective,
+            initial,
+            method="SLSQP",
+            bounds=[(0.0, 1.0)] * n_estimates,
+            constraints={"type": "eq", "fun": lambda weights: np.sum(weights) - 1.0},
+            options={"ftol": 1e-12, "maxiter": 200},
+        )
+        if not result.success:
+            raise RuntimeError(f"CI weight optimization failed: {result.message}")
+        weights = np.clip(result.x, 0.0, 1.0)
+        weights /= np.sum(weights)
+        fused_information = sum(
+            weight * matrix
+            for weight, matrix in zip(weights, information_matrices)
+        )
+        P_fused = np.linalg.inv(fused_information)
+        information_state = sum(
+            weight * matrix @ state
+            for weight, matrix, state in zip(weights, information_matrices, states)
+        )
+        x_fused = P_fused @ information_state
+        return x_fused, 0.5 * (P_fused + P_fused.T)
 
     @staticmethod
     def fusion_gain_db(P_fused: np.ndarray, P_best: np.ndarray) -> float:
@@ -440,8 +518,16 @@ class TrackAssociator:
     Reference: Blackman (1986), Ch. 6
     """
 
-    def __init__(self, gate_distance_m: float = 1000.0) -> None:
+    def __init__(
+        self, gate_distance_m: float = 1000.0, gate_probability: float = 0.9973
+    ) -> None:
+        if gate_distance_m <= 0.0:
+            raise ValueError("gate_distance_m must be positive")
+        if not 0.0 < gate_probability < 1.0:
+            raise ValueError("gate_probability must be between zero and one")
         self.gate_distance_m = gate_distance_m
+        self.gate_probability = gate_probability
+        self.gate_threshold = float(chi2.ppf(gate_probability, df=2))
 
     def associate(
         self,
@@ -463,29 +549,31 @@ class TrackAssociator:
         if not tracks_a or not tracks_b:
             return []
 
-        pairs = []
-        used_b = set()
-
-        for ta in tracks_a:
-            best_dist = self.gate_distance_m
-            best_tb = None
-            best_idx = -1
-
-            for idx, tb in enumerate(tracks_b):
-                if idx in used_b:
+        cost = np.full((len(tracks_a), len(tracks_b)), np.inf)
+        for row, track_a in enumerate(tracks_a):
+            for col, track_b in enumerate(tracks_b):
+                innovation = track_a.state[:2] - track_b.state[:2]
+                if np.linalg.norm(innovation) > self.gate_distance_m:
                     continue
+                innovation_covariance = (
+                    track_a.covariance[:2, :2] + track_b.covariance[:2, :2]
+                )
+                nis = float(
+                    innovation
+                    @ np.linalg.solve(innovation_covariance, innovation)
+                )
+                if nis <= self.gate_threshold:
+                    cost[row, col] = nis
 
-                dist = np.linalg.norm(ta.state[:2] - tb.state[:2])
-                if dist < best_dist:
-                    best_dist = dist
-                    best_tb = tb
-                    best_idx = idx
-
-            if best_tb is not None:
-                pairs.append((ta, best_tb))
-                used_b.add(best_idx)
-
-        return pairs
+        if not np.isfinite(cost).any():
+            return []
+        assignment_cost = np.where(np.isfinite(cost), cost, 1e12)
+        rows, columns = linear_sum_assignment(assignment_cost)
+        return [
+            (tracks_a[row], tracks_b[col])
+            for row, col in zip(rows, columns)
+            if np.isfinite(cost[row, col])
+        ]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -523,6 +611,9 @@ class NetworkManager:
         self,
         link_delay_ms: float = 100.0,
         association_gate_m: float = 1000.0,
+        process_noise_accel_mps2: float = 5.0,
+        association_gate_probability: float = 0.9973,
+        max_strobe_age_s: float = 2.0,
     ) -> None:
         """
         Initialize network manager.
@@ -533,7 +624,16 @@ class NetworkManager:
         """
         self.nodes: Dict[str, RadarNode] = {}
         self.latency = LatencyModel(delay_ms=link_delay_ms)
-        self.associator = TrackAssociator(gate_distance_m=association_gate_m)
+        if process_noise_accel_mps2 < 0.0:
+            raise ValueError("process_noise_accel_mps2 cannot be negative")
+        if max_strobe_age_s <= 0.0:
+            raise ValueError("max_strobe_age_s must be positive")
+        self.associator = TrackAssociator(
+            gate_distance_m=association_gate_m,
+            gate_probability=association_gate_probability,
+        )
+        self.process_noise_accel_mps2 = process_noise_accel_mps2
+        self.max_strobe_age_s = max_strobe_age_s
         self.ci = CovarianceIntersection()
         self.triangulator = StrobeTriangulator()
 
@@ -581,9 +681,12 @@ class NetworkManager:
             current_time: Current simulation time [s]
         """
         if node_id in self.nodes:
-            self.nodes[node_id].tracks = tracks
             self.latency.enqueue(
-                {"node_id": node_id, "tracks": tracks, "type": "tracks"},
+                {
+                    "node_id": node_id,
+                    "tracks": copy.deepcopy(tracks),
+                    "type": "tracks",
+                },
                 current_time,
             )
 
@@ -602,11 +705,47 @@ class NetworkManager:
             current_time: Current simulation time [s]
         """
         if node_id in self.nodes:
-            self.nodes[node_id].strobes = strobes
             self.latency.enqueue(
-                {"node_id": node_id, "strobes": strobes, "type": "strobes"},
+                {
+                    "node_id": node_id,
+                    "strobes": copy.deepcopy(strobes),
+                    "type": "strobes",
+                },
                 current_time,
             )
+
+    def _process_ready_messages(self, current_time: float) -> None:
+        for message in self.latency.dequeue(current_time):
+            node = self.nodes.get(message["node_id"])
+            if node is None:
+                continue
+            if message["type"] == "tracks":
+                node.tracks = message["tracks"]
+            elif message["type"] == "strobes":
+                node.strobes = message["strobes"]
+
+    def _propagate_track(self, track: NetworkTrack, current_time: float) -> NetworkTrack:
+        dt = current_time - track.timestamp
+        if dt < -1e-12:
+            raise ValueError("cannot fuse a track from the future")
+        if dt <= 0.0:
+            return copy.deepcopy(track)
+        F = np.array(
+            [[1.0, 0.0, dt, 0.0], [0.0, 1.0, 0.0, dt], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+        )
+        dt2 = dt * dt
+        G = np.array(
+            [[dt2 / 2.0, 0.0], [0.0, dt2 / 2.0], [dt, 0.0], [0.0, dt]]
+        )
+        Q = G @ G.T * self.process_noise_accel_mps2**2
+        return NetworkTrack(
+            track_id=track.track_id,
+            node_id=track.node_id,
+            state=F @ track.state,
+            covariance=F @ track.covariance @ F.T + Q,
+            timestamp=current_time,
+            snr_db=track.snr_db,
+        )
 
     def fuse(self, current_time: float) -> List[FusedTrack]:
         """
@@ -618,14 +757,15 @@ class NetworkManager:
         Returns:
             List of fused tracks (Common Tactical Picture)
         """
-        # Release delayed data
-        self.latency.dequeue(current_time)
+        self._process_ready_messages(current_time)
 
         # Collect all tracks from all nodes
         all_node_tracks: Dict[str, List[NetworkTrack]] = {}
         for node_id, node in self.nodes.items():
             if node.tracks:
-                all_node_tracks[node_id] = node.tracks
+                all_node_tracks[node_id] = [
+                    self._propagate_track(track, current_time) for track in node.tracks
+                ]
 
         # Pairwise association and fusion
         node_ids = list(all_node_tracks.keys())
@@ -648,31 +788,33 @@ class NetworkManager:
                     )
             return self._fused_tracks
 
-        # Multi-radar CI fusion
-        # Start with first node's tracks as base
-        base_tracks = all_node_tracks[node_ids[0]]
+        clusters: List[List[NetworkTrack]] = [
+            [track] for track in all_node_tracks[node_ids[0]]
+        ]
+        for node_id in node_ids[1:]:
+            node_tracks = all_node_tracks[node_id]
+            representatives = [cluster[0] for cluster in clusters]
+            matches = self.associator.associate(representatives, node_tracks)
+            cluster_by_representative = {
+                id(representative): index
+                for index, representative in enumerate(representatives)
+            }
+            matched_node_tracks = set()
+            for representative, node_track in matches:
+                clusters[cluster_by_representative[id(representative)]].append(node_track)
+                matched_node_tracks.add(id(node_track))
+            clusters.extend(
+                [track]
+                for track in node_tracks
+                if id(track) not in matched_node_tracks
+            )
 
-        for trk in base_tracks:
-            states = [trk.state.copy()]
-            covs = [trk.covariance.copy()]
-            sources = [node_ids[0]]
-
-            # Find matches in other nodes
-            for other_nid in node_ids[1:]:
-                other_tracks = all_node_tracks[other_nid]
-                matched = self.associator.associate([trk], other_tracks)
-                if matched:
-                    _, match_trk = matched[0]
-                    states.append(match_trk.state.copy())
-                    covs.append(match_trk.covariance.copy())
-                    sources.append(other_nid)
-
-            # Fuse
+        for cluster in clusters:
+            states = [track.state for track in cluster]
+            covs = [track.covariance for track in cluster]
             x_fused, P_fused = self.ci.fuse_multiple(states, covs)
-
-            # Compute fusion gain
-            best_trace = min(np.trace(c) for c in covs)
-            gain = self.ci.fusion_gain_db(P_fused, covs[0])
+            best_covariance = min(covs, key=np.trace)
+            gain = self.ci.fusion_gain_db(P_fused, best_covariance)
 
             self._fused_id_counter += 1
             self._fused_tracks.append(
@@ -680,7 +822,7 @@ class NetworkManager:
                     fused_id=self._fused_id_counter,
                     state=x_fused,
                     covariance=P_fused,
-                    source_nodes=sources,
+                    source_nodes=[track.node_id for track in cluster],
                     fusion_gain_db=gain,
                     timestamp=current_time,
                 )
@@ -688,16 +830,23 @@ class NetworkManager:
 
         return self._fused_tracks
 
-    def triangulate_jammers(self) -> List[Tuple[np.ndarray, float]]:
+    def triangulate_jammers(
+        self, current_time: float = 0.0
+    ) -> List[Tuple[np.ndarray, float]]:
         """
         Triangulate jammer positions from all strobe reports.
 
         Returns:
             List of (position_xy, residual_m) for each jammer
         """
+        self._process_ready_messages(current_time)
         all_strobes: List[StrobeReport] = []
         for node in self.nodes.values():
-            all_strobes.extend(node.strobes)
+            all_strobes.extend(
+                strobe
+                for strobe in node.strobes
+                if 0.0 <= current_time - strobe.timestamp <= self.max_strobe_age_s
+            )
 
         if len(all_strobes) < 2:
             self._jammer_positions = []

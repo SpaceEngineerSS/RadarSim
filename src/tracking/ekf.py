@@ -113,7 +113,7 @@ class ExtendedKalmanFilter:
         # Track divergence count
         self._divergence_count = 0
 
-        # ═══ PHASE 28: COAST MODE (Jamming Resilience) ═══
+        # Coast state used when interference makes a measurement unusable.
         self.coast_threshold_sjnr_db: float = 6.0
         self.max_coast_scans: int = 10
         self._coast_count: int = 0
@@ -322,7 +322,7 @@ class ExtendedKalmanFilter:
         return self.update(state, (r_m, theta_rad))
 
     # ═══════════════════════════════════════════════════════════════
-    # PHASE 28: COAST MODE (Jamming Resilience)
+    # Interference-aware coast mode
     # ═══════════════════════════════════════════════════════════════
 
     def update_with_jsr(
@@ -365,8 +365,7 @@ class ExtendedKalmanFilter:
             self._coast_count += 1
             self._is_coasting = True
             # Inflate covariance slightly during coast (uncertainty grows)
-            P_inflated = state.P * 1.02
-            return KalmanState(x=state.x.copy(), P=P_inflated)
+            return KalmanState(x=state.x.copy(), P=state.P.copy())
 
         # SJNR recovered — resume tracking
         self._coast_count = 0
@@ -390,10 +389,8 @@ class ExtendedKalmanFilter:
 
         Reference: Schleher (1999), Eq. 4.8
         """
-        if jsr_db < -50:
-            return snr_db  # No significant jamming
-        jsr_linear = 10.0 ** (jsr_db / 10.0)
-        return snr_db - 10.0 * np.log10(1.0 + jsr_linear)
+        inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_db / 10.0)
+        return float(-10.0 * np.log10(inverse_sjnr))
 
     @property
     def is_coasting(self) -> bool:
@@ -408,7 +405,7 @@ class ExtendedKalmanFilter:
     @property
     def should_drop_track(self) -> bool:
         """Check if track should be dropped (exceeded max coast)."""
-        return self._coast_count > self.max_coast_scans
+        return self._coast_count >= self.max_coast_scans
 
     # ═══════════════════════════════════════════════════════════════
     # MEASUREMENT MODEL (Nonlinear)
@@ -503,7 +500,7 @@ class ExtendedKalmanFilter:
         # Continuous scaling: scale = 10^((20 - SNR)/20)
         # Clamp SNR to avoid extreme values
         snr_clamped = np.clip(snr_db, -10.0, 40.0)
-        scale = 10.0 ** ((20.0 - snr_clamped) / 20.0)
+        scale = 10.0 ** ((20.0 - snr_clamped) / 10.0)
         scale = np.clip(scale, 0.3, 30.0)
 
         return self.R_nominal * scale
@@ -697,7 +694,7 @@ class ExtendedKalmanFilter:
 
     def get_heading(self, state: KalmanState) -> float:
         """Calculate heading angle (radians, 0 = North, CW positive)."""
-        return np.arctan2(state.x[2], state.x[3])
+        return np.arctan2(state.x[3], state.x[2])
 
 
 # ═══════════════════════════════════════════════════════════════════════

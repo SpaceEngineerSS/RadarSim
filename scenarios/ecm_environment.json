@@ -1,74 +1,78 @@
 {
+  "scenario": {
     "name": "ECM Environment",
-    "description": "Hostile ECM environment with jamming and decoys",
-    "version": "1.0",
-    "radar": {
-        "frequency_ghz": 10.0,
-        "power_watts": 2000,
-        "antenna_gain_db": 35,
-        "prf_hz": 2000,
-        "beamwidth_deg": 1.2
+    "description": "Generic noise and DRFM interference against two airborne targets",
+    "duration_seconds": 180,
+    "update_rate_hz": 10
+  },
+  "radar": {
+    "name": "X-band test radar",
+    "frequency_hz": 10000000000.0,
+    "power_watts": 2000,
+    "prf_hz": 2000,
+    "pulse_width_s": 0.000002,
+    "system_losses_db": 5.0,
+    "antenna": {
+      "gain_db": 35,
+      "beamwidth_az_deg": 1.2,
+      "beamwidth_el_deg": 2.0,
+      "polarization_tilt_deg": 0
     },
-    "environment": {
-        "terrain_type": "sea_calm",
-        "weather": "clear",
-        "sea_state": 2
+    "receiver": {
+      "noise_figure_db": 4.0,
+      "bandwidth_hz": 2000000,
+      "system_temperature_k": 290,
+      "full_scale_dbm": -25
     },
-    "targets": [
-        {
-            "id": 1,
-            "type": "bomber",
-            "initial_position": [
-                45000,
-                0,
-                10000
-            ],
-            "velocity": [
-                -180,
-                0,
-                -5
-            ],
-            "rcs": 25.0,
-            "swerling_model": 1,
-            "has_ecm": true
-        },
-        {
-            "id": 2,
-            "type": "fighter",
-            "initial_position": [
-                40000,
-                15000,
-                7000
-            ],
-            "velocity": [
-                -220,
-                -80,
-                0
-            ],
-            "rcs": 3.0,
-            "swerling_model": 3
-        }
-    ],
-    "ecm": {
-        "enabled": true,
-        "jammer_power_watts": 500,
-        "techniques": [
-            "noise_jamming",
-            "drfm",
-            "rgpo",
-            "chaff"
-        ],
-        "activation_time_seconds": 20,
-        "chaff_deploy_interval_seconds": 15
+    "position": {"x_m": 0, "y_m": 0, "z_m": 25}
+  },
+  "environment": {
+    "temperature_c": 15,
+    "pressure_hpa": 1013.25,
+    "water_vapor_gpm3": 7.5,
+    "terrain_type": "sea",
+    "sea_state": 2,
+    "rain_rate_mm_hr": 0
+  },
+  "targets": [
+    {
+      "name": "Noise jammer target",
+      "type": "bomber",
+      "initial_position": {"x_m": 45000, "y_m": 0, "z_m": 10000},
+      "velocity": {"vx_mps": -180, "vy_mps": 0, "vz_mps": -5},
+      "rcs_m2": 25.0,
+      "swerling_model": 1,
+      "has_ecm": true,
+      "ecm_type": "noise_barrage",
+      "ecm_power_watts": 500,
+      "ecm_bandwidth_hz": 100000000
     },
-    "eccm": {
-        "frequency_hopping": true,
-        "prf_jitter": true,
-        "sidelobe_blanking": true,
-        "cfar_enabled": true
-    },
-    "simulation": {
-        "duration_seconds": 180,
-        "time_step": 0.1
+    {
+      "name": "DRFM target",
+      "type": "fighter",
+      "initial_position": {"x_m": 40000, "y_m": 15000, "z_m": 7000},
+      "velocity": {"vx_mps": -220, "vy_mps": -80, "vz_mps": 0},
+      "rcs_m2": 3.0,
+      "swerling_model": 3,
+      "has_ecm": true,
+      "ecm_type": "drfm",
+      "ecm_power_watts": 100,
+      "drfm": {
+        "mode": "rgpo",
+        "gain_over_skin_db": 12,
+        "capture_dwell_s": 1.5,
+        "pull_rate_mps": 75,
+        "max_pull_m": 2500,
+        "vgpo_rate_hz_per_s": 80,
+        "max_doppler_pull_hz": 600,
+        "inherent_delay_s": 0.0000002
+      }
     }
+  ],
+  "simulation": {
+    "enable_atmospheric_loss": true,
+    "enable_clutter": true,
+    "pfa": 0.000001,
+    "pulses_integrated": 8
+  }
 }

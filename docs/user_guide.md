@@ -1,162 +1,120 @@
-# RadarSim User Guide
+# User guide
 
-## Quick Start
+## Install and start
 
-```bash
-python run_gui.py
+Create a Python 3.9–3.12 virtual environment and install `.[gui]`. Start the installed command with `radarsim`, or run `python run_gui.py` from a checkout. A display server with OpenGL support is recommended for the 3-D view; software rendering may be slower.
+
+The main window groups scenario controls, radar parameters, environment controls, target management, scopes, and analysis views. Load a scenario before starting if you need repeatable inputs. Changing live parameters creates a new experiment and should be recorded with the result.
+
+## Scenario format
+
+YAML and JSON share the same schema. The loader recognizes `scenario`, `radar`, `targets`, `environment`, and `simulation`. Unrecognized auxiliary sections remain in the source file but do not alter the engine.
+
+```yaml
+scenario:
+  name: "Reference tracking run"
+  description: "One constant-velocity target"
+  duration_seconds: 60
+  update_rate_hz: 20
+
+radar:
+  name: "X-band test radar"
+  frequency_hz: 10.0e9
+  power_watts: 100000
+  prf_hz: 2000
+  pulse_width_s: 2.0e-6
+  system_losses_db: 4.0
+  antenna:
+    gain_db: 35
+    beamwidth_az_deg: 2.0
+    beamwidth_el_deg: 3.0
+    polarization_tilt_deg: 0
+  receiver:
+    noise_figure_db: 4.0
+    bandwidth_hz: 1.0e6
+    system_temperature_k: 290
+    full_scale_dbm: -20
+  position: {x_m: 0, y_m: 0, z_m: 20}
+
+targets:
+  - name: "Target 1"
+    type: "aircraft"
+    rcs_m2: 5.0
+    swerling_model: 1
+    initial_position: {x_m: 30000, y_m: 5000, z_m: 3000}
+    velocity: {vx_mps: -150, vy_mps: 0, vz_mps: 0}
+    has_ecm: false
+
+environment:
+  temperature_c: 15
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 7.5
+  rain_rate_mm_hr: 0
+  terrain_type: "rural"
+  sea_state: 0
+  ground_surface:
+    model: "gamma"
+
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-6
+  pulses_integrated: 8
 ```
 
----
+Valid `swerling_model` values are 0–4. `ground_surface.model` is `gamma` or `oh1992`. Sea state is 0–6. Probability of false alarm must be strictly between zero and one.
 
-## Main Window Layout
+For a DRFM target, set `has_ecm: true`, `ecm_type: drfm`, and add:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Menu Bar: File | Simulation | View | Advanced | Help   │
-├───────────────────┬─────────────────────────────────────┤
-│                   │                                     │
-│  Control Panel    │         Radar Scopes                │
-│  - Radar Params   │   [PPI] [RHI] [3D TACTICAL]        │
-│  - Start/Stop     │                                     │
-│  - Speed          │                                     │
-│                   │                                     │
-├───────────────────┼─────────────────────────────────────┤
-│  Status Panel     │     Target Inspector / A-Scope      │
-│  - Track List     │                                     │
-└───────────────────┴─────────────────────────────────────┘
+```yaml
+drfm:
+  mode: rgpo
+  gain_over_skin_db: 12
+  capture_dwell_s: 1.5
+  pull_rate_mps: 75
+  max_pull_m: 2500
+  vgpo_rate_hz_per_s: 80
+  max_doppler_pull_hz: 600
+  inherent_delay_s: 2.0e-7
 ```
 
----
+Set `mode` to `rgpo` for range pull-off or `vgpo` for Doppler pull-off. A single jammer instance applies one mode at a time.
 
-## Main Scopes
+## Reading displays
 
-### PPI (Plan Position Indicator)
-- Polar display centered on radar
-- Sweep line with phosphor decay
-- Target blips with MIL-STD-2525D colors
+The PPI shows horizontal range/azimuth; the RHI shows range/elevation; the A-scope shows amplitude or power versus range and can overlay a CFAR threshold. The range-Doppler view is ambiguous unless PRF and wavelength are considered. The target inspector reports radial velocity using positive-away convention.
 
-### RHI (Range-Height Indicator)
-- Side view: Range vs Altitude
-- Shows terrain masking
+Track symbols are estimates, not truth. A confirmed track has met the configured hit requirement. A coasted track is prediction-only and its covariance should grow. Deletion means the lifecycle threshold was exceeded; it does not prove the physical target disappeared.
 
-### 3D Tactical Map
-- OpenGL terrain rendering
-- Target spheres with color coding
-- Rotate: Left-click drag
-- Zoom: Scroll wheel
+Receiver saturation indicates aggregate input exceeded full scale. In that state, displayed post-limiter SNR includes a Gaussian-equivalent distortion diagnostic; exact deterministic spectral distortion is outside the aggregate engine path.
 
----
+## SAR and ISAR
 
-## Advanced Menu
+The SAR viewer consumes point-scatterer scenes and platform/radar parameters. Choose range-Doppler processing for the implemented focused result. Image magnitude is normalized to its own finite peak and displayed in dB with a controlled floor and brightness offset. Quality measures such as PSLR or entropy depend on the selected scene and crop; they are not universal sensor specifications.
 
-### Enable Clutter
-Adds environmental noise:
-- Ground/Sea/Rain returns
-- **Rain Attenuation:** Range reduction based on rain rate (check Console)
-- SNR degradation based on terrain type and sea state
+ISAR needs range profiles over a coherent observation and a nonzero angular-rate estimate for metric cross range. Profile alignment removes bulk translation at integer-bin precision.
 
-### Enable MTI Filter
-Removes slow-moving targets:
-- Velocity threshold: 2 m/s default
-- Clutter rejection
+## Recording and export
 
-### Enable ECCM Frequency Agility
-Counters ECM jamming:
-- Random frequency hopping
-- Reduces jammer effectiveness
+HDF5 recording preserves simulation metadata and time-indexed results. Replay validates required datasets and reports malformed JSON metadata rather than accepting arbitrary code. CSV/JSON exports are useful for tables; GeoJSON/KML require a meaningful local-to-geographic conversion configured by the caller.
 
-### Enable Monopulse Tracking
-Precision angle estimation:
-- Sub-beamwidth accuracy
-- Sum/Difference pattern processing
+## Headless studies
 
-### Generate SAR Image
-Opens SAR Viewer:
-- **Real Physics:** Uses Range-Doppler Algorithm on active targets
-- Displays authentic heatmap (not pre-rendered)
-- Contrast/brightness sliders
-- Contrast/brightness sliders
+```python
+from src.io.scenario_loader import ScenarioLoader
 
----
+loader = ScenarioLoader("scenarios/basic_tracking.json")
+config = loader.get_config()
+engine = loader.create_simulation_engine()
 
-## Analysis Window
+history = []
+steps = round(config.duration_s * config.update_rate_hz)
+for _ in range(steps):
+    history.append(engine.step())
+```
 
-**Open:** View → Show Analysis Window
+Use a fixed NumPy seed before constructing stochastic scenarios when repeatability is required. Save the exact scenario, version, seed, and dependency versions with exported results.
 
-### Tab 1: Recording Analysis
-- Playback controls for HDF5 recordings
-- Time slider
+## Troubleshooting
 
-### Tab 2: Ambiguity (PRF)
-- PRF vs Range/Velocity trade-off
-- Interactive sliders
-- Blind speed visualization
-
-### Tab 3: ROC Curves
-- Pd vs Pfa for different SNRs
-- Swerling model selector
-- Operating point marker
-
-### Tab 4: SNR Stats
-- Real-time SNR histogram
-- Detection strength distribution
-- Weak/Moderate/Strong zones
-
----
-
-## Scenarios
-
-Load pre-built scenarios from **File → Load Scenario**:
-
-| Scenario | Description |
-|----------|-------------|
-| **Air Logic / Combat** | |
-| `close_air_combat.yaml` | Dogfight scenario with fast maneuvering targets |
-| `f16_vs_sa6.yaml` | SEAD mission simulation (F-16 vs Surface-to-Air) |
-| `drone_swarm_saturation.yaml` | High-density small RCS targets to test saturation |
-| `hypersonic_interception.yaml` | Very high speed (>Mach 5) targets |
-| **Maritime / Naval** | |
-| `naval_battlegroup.yaml` | Complex fleet defense environment |
-| **Stealth / Advanced** | |
-| `stealth_deep_penetration.yaml` | Low-RCS stealth aircraft testing detection limits |
-| `ecm_environment.json` | Heavy electronic countermeasures environment |
-| **Terrain / Physics** | |
-| `mountain_ambush.yaml` | Terrain masking and pop-up target testing |
-| `ground_clutter_filtering.yaml` | Low-altitude targets vs ground clutter (MTI test) |
-| `basic_tracking.json` | Simple single target for calibration |
-
----
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| Space | Play/Pause |
-| R | Reset |
-| 1/2/3/4 | Switch tabs |
-| F11 | Fullscreen |
-| Ctrl+O | Load scenario |
-| Ctrl+Shift+S | Save scenario |
-
----
-
-## B-Scope Display
-
-When viewing AESA radar scenarios:
-- Range vs Azimuth Cartesian display
-- **ECM Strobes:** Yellow vertical bars show jammer directions
-- Targets color-coded by MIL-STD-2525D
-
----
-
-## Tips
-
-1. **Enable Clutter** for realistic SNR degradation
-2. **Use MTI** to filter ground clutter
-3. **Check ROC Curves** to understand detection trade-offs
-4. **Hover over A-Scope** to see CFAR cell visualization
-5. **Watch B-Scope** for ECM strobe indicators
-
----
-
-*Document generated for RadarSim v1.0.0*
+If the command reports missing GUI dependencies, install `.[gui]` in the active interpreter. If OpenGL rendering fails, first verify that the 2-D scopes work and update the graphics driver. If a target never appears in a pulse-Doppler map, check the fast-time instrumented range and ambiguity intervals. If CFAR false alarms differ from `pfa`, confirm that the reference power is independent exponential noise and that enough valid edge-free cells were counted.

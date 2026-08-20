@@ -24,7 +24,7 @@ Reference:
 from .kalman import KalmanState, LinearKalmanFilter
 from .tracker import Track, TrackManager, TrackStatus
 
-# Extended Kalman Filter (Phase 27)
+# Extended Kalman filter
 try:
     from .ekf import ExtendedKalmanFilter
 

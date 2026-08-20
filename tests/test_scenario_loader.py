@@ -18,6 +18,7 @@ def test_f16_scenario_parameters_reach_engine():
     assert engine.radar.pulse_width_s == pytest.approx(2.0e-6)
     assert engine.radar.receiver_bandwidth_hz == pytest.approx(100.0e6)
     assert engine.radar.noise_figure_db == pytest.approx(3.0)
+    assert engine.receiver_full_scale_dbm == pytest.approx(-20.0)
     assert engine._radar_params.noise_bandwidth == pytest.approx(100.0e6)
     assert engine._radar_params.prf == pytest.approx(2000.0)
     assert engine._radar_params.pulse_width == pytest.approx(2.0e-6)
@@ -78,6 +79,7 @@ def test_exported_scenario_round_trips_runtime_parameters(tmp_path):
     assert restored.radar.pulse_width_s == original.radar.pulse_width_s
     assert restored.radar.receiver_bandwidth_hz == original.radar.receiver_bandwidth_hz
     assert restored.radar.noise_figure_db == original.radar.noise_figure_db
+    assert restored.receiver_full_scale_dbm == original.receiver_full_scale_dbm
     assert restored.radar.polarization_tilt_deg == original.radar.polarization_tilt_deg
     assert restored.probability_false_alarm == original.probability_false_alarm
     assert restored.clutter_enabled == original.clutter_enabled
@@ -102,6 +104,16 @@ targets:
   - name: Surface target
     rcs_m2: 2
     initial_position: {x_m: 1000, y_m: 0, z_m: 0}
+    has_ecm: true
+    ecm_type: drfm
+    ecm_power_watts: 250
+    drfm:
+      gain_over_skin_db: 13
+      capture_dwell_s: 0.7
+      pull_rate_mps: 85
+      max_pull_m: 1600
+      mode: rgpo
+      inherent_delay_s: 4.0e-7
 environment:
   terrain_type: rural
   ground_surface:
@@ -122,6 +134,11 @@ simulation:
     assert engine.land_gamma_db == pytest.approx(-17.5)
     assert engine.ground_relative_permittivity == complex(10.0, -1.2)
     assert engine.ground_rms_height_m == pytest.approx(0.012)
+    assert engine.targets[0].drfm_gain_over_skin_db == pytest.approx(13.0)
+    assert engine.targets[0].drfm_capture_dwell_s == pytest.approx(0.7)
+    assert engine.targets[0].drfm_pull_rate_mps == pytest.approx(85.0)
+    assert engine.targets[0].drfm_max_pull_m == pytest.approx(1600.0)
+    assert engine.targets[0].drfm_inherent_delay_s == pytest.approx(4.0e-7)
 
     result = engine.step()[0]
     assert result.surface_clutter_model == "oh1992_bare_soil"
@@ -137,3 +154,8 @@ simulation:
     assert restored.land_gamma_db == engine.land_gamma_db
     assert restored.ground_relative_permittivity == engine.ground_relative_permittivity
     assert restored.ground_rms_height_m == engine.ground_rms_height_m
+    assert restored.targets[0].drfm_gain_over_skin_db == pytest.approx(13.0)
+    assert restored.targets[0].drfm_capture_dwell_s == pytest.approx(0.7)
+    assert restored.targets[0].drfm_pull_rate_mps == pytest.approx(85.0)
+    assert restored.targets[0].drfm_max_pull_m == pytest.approx(1600.0)
+    assert restored.targets[0].drfm_inherent_delay_s == pytest.approx(4.0e-7)

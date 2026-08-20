@@ -66,6 +66,10 @@ class LinearKalmanFilter:
             measurement_noise: Measurement noise standard deviation (meters)
                               Higher = smoother tracks, slower response
         """
+        if process_noise < 0.0:
+            raise ValueError("process_noise cannot be negative")
+        if measurement_noise <= 0.0:
+            raise ValueError("measurement_noise must be positive")
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
 
@@ -97,6 +101,8 @@ class LinearKalmanFilter:
         """
         if velocity is None:
             velocity = (0.0, 0.0)
+        if position_uncertainty <= 0.0 or velocity_uncertainty <= 0.0:
+            raise ValueError("initial uncertainties must be positive")
 
         # State vector [x, y, vx, vy]
         x = np.array(
@@ -172,6 +178,8 @@ class LinearKalmanFilter:
         Returns:
             Predicted state
         """
+        if dt <= 0.0:
+            raise ValueError("dt must be positive")
         F = self._get_transition_matrix(dt)
         Q = self._get_process_noise(dt)
 
@@ -212,7 +220,7 @@ class LinearKalmanFilter:
         S = self.H @ state.P @ self.H.T + self.R
 
         # Kalman gain
-        K = state.P @ self.H.T @ np.linalg.inv(S)
+        K = np.linalg.solve(S, self.H @ state.P).T
 
         # State update
         x_new = state.x + K @ y
@@ -221,7 +229,7 @@ class LinearKalmanFilter:
         I_KH = np.eye(4) - K @ self.H
         P_new = I_KH @ state.P @ I_KH.T + K @ self.R @ K.T
 
-        return KalmanState(x=x_new, P=P_new)
+        return KalmanState(x=x_new, P=0.5 * (P_new + P_new.T))
 
     def get_position(self, state: KalmanState) -> Tuple[float, float]:
         """Extract position from state."""
@@ -237,4 +245,4 @@ class LinearKalmanFilter:
 
     def get_heading(self, state: KalmanState) -> float:
         """Calculate heading angle (radians, 0 = North, CW positive)."""
-        return np.arctan2(state.x[2], state.x[3])
+        return np.arctan2(state.x[3], state.x[2])

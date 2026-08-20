@@ -1,50 +1,69 @@
-API Reference
+API reference
 =============
 
-Physics Module
---------------
-
-.. automodule:: src.physics
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Radar Equation
-~~~~~~~~~~~~~~
+Physics
+-------
 
 .. automodule:: src.physics.radar_equation
    :members:
-   :undoc-members:
    :show-inheritance:
-
-Atmospheric Attenuation
-~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: src.physics.atmospheric
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-RCS Models
-~~~~~~~~~~
 
 .. automodule:: src.physics.rcs
    :members:
-   :undoc-members:
    :show-inheritance:
 
-ECM Simulation
-~~~~~~~~~~~~~~
+.. automodule:: src.physics.atmospheric
+   :members:
+   :show-inheritance:
+
+.. automodule:: src.physics.clutter
+   :members:
+   :show-inheritance:
 
 .. automodule:: src.physics.ecm
    :members:
-   :undoc-members:
    :show-inheritance:
 
-GUI Module
-----------
+Signal processing
+-----------------
 
-.. automodule:: gui.main_window
+.. automodule:: src.signal.pulse_doppler
    :members:
-   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: src.signal.cfar
+   :members:
+   :show-inheritance:
+
+Tracking and fusion
+-------------------
+
+.. automodule:: src.tracking.tracker
+   :members:
+   :show-inheritance:
+
+.. automodule:: src.tracking.ekf
+   :members:
+   :show-inheritance:
+
+.. automodule:: src.simulation.network_manager
+   :members:
+   :show-inheritance:
+
+.. automodule:: src.advanced.sensor_fusion
+   :members:
+   :show-inheritance:
+
+Imaging
+-------
+
+.. automodule:: src.advanced.sar_isar
+   :members:
+   :show-inheritance:
+
+Scenario loading
+----------------
+
+.. automodule:: src.io.scenario_loader
+   :members:
    :show-inheritance:

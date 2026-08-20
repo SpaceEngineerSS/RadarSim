@@ -13,16 +13,17 @@ Reference:
     - Bar-Shalom, Y. "Multitarget-Multisensor Tracking", 1990
 """
 
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
+from scipy.stats import chi2
 
 from .kalman import KalmanState, LinearKalmanFilter
 
-# Extended Kalman Filter (Phase 27)
+# Extended Kalman filter
 try:
     from .ekf import ExtendedKalmanFilter
 
@@ -61,12 +62,14 @@ class Track:
     state: KalmanState
     status: TrackStatus = TrackStatus.TENTATIVE
     hits: int = 1
+    consecutive_hits: int = 1
     misses: int = 0
-    creation_time: float = field(default_factory=time.time)
-    last_update: float = field(default_factory=time.time)
+    creation_time: float = 0.0
+    last_update: float = 0.0
+    current_time: float = 0.0
     history: List[Tuple[float, float]] = field(default_factory=list)
 
-    # Track classification (from ML or manual)
+    # Optional classification metadata supplied by a caller.
     classification: str = "Unknown"
     confidence: float = 0.0
 
@@ -88,12 +91,12 @@ class Track:
     @property
     def heading_rad(self) -> float:
         """Get heading in radians (0 = North, CW positive)."""
-        return np.arctan2(self.state.x[2], self.state.x[3])
+        return np.arctan2(self.state.x[3], self.state.x[2])
 
     @property
     def age_seconds(self) -> float:
         """Get track age in seconds."""
-        return time.time() - self.creation_time
+        return self.current_time - self.creation_time
 
 
 class TrackManager:
@@ -123,6 +126,7 @@ class TrackManager:
         max_history: int = 50,
         process_noise: float = 5.0,
         measurement_noise: float = 50.0,
+        gate_probability: float = 0.9973,
     ) -> None:
         """
         Initialize Track Manager.
@@ -135,23 +139,33 @@ class TrackManager:
             process_noise: Kalman filter process noise
             measurement_noise: Kalman filter measurement noise
         """
+        if gate_distance <= 0.0 or measurement_noise <= 0.0:
+            raise ValueError("gate distance and measurement noise must be positive")
+        if process_noise < 0.0:
+            raise ValueError("process noise cannot be negative")
+        if max_misses < 1 or confirm_hits < 1 or max_history < 1:
+            raise ValueError("track count parameters must be at least one")
         self.gate_distance = gate_distance
         self.max_misses = max_misses
         self.confirm_hits = confirm_hits
         self.max_history = max_history
+        if not 0.0 < gate_probability < 1.0:
+            raise ValueError("gate_probability must be between zero and one")
+        self.gate_probability = gate_probability
+        self.gate_threshold = float(chi2.ppf(gate_probability, df=2))
 
         # Kalman filter for all tracks
         self.kf = LinearKalmanFilter(
             process_noise=process_noise, measurement_noise=measurement_noise
         )
 
-        # ═══ PHASE 27: EKF Support ═══
         self.use_ekf = False
         self._ekf: Optional["ExtendedKalmanFilter"] = None
 
         # Track storage
         self.tracks: Dict[int, Track] = {}
         self._next_id = 1
+        self.current_time = 0.0
 
     def update(
         self,
@@ -178,7 +192,10 @@ class TrackManager:
         Returns:
             List of active tracks
         """
-        current_time = time.time()
+        if dt <= 0.0:
+            raise ValueError("dt must be positive")
+        self.current_time += dt
+        current_time = self.current_time
 
         # 1. Predict all tracks
         for track in self.tracks.values():
@@ -205,12 +222,14 @@ class TrackManager:
                 track.state = self.kf.update(track.state, measurement)
             track.last_update = current_time
             track.hits += 1
+            track.consecutive_hits += 1
             track.misses = 0
+            track.current_time = current_time
 
             # Promote tentative -> confirmed
             if (
                 track.status == TrackStatus.TENTATIVE
-                and track.hits >= self.confirm_hits
+                and track.consecutive_hits >= self.confirm_hits
             ):
                 track.status = TrackStatus.CONFIRMED
             elif track.status == TrackStatus.COASTING:
@@ -233,12 +252,14 @@ class TrackManager:
         for track_id in unassigned_tracks:
             track = self.tracks[track_id]
             track.misses += 1
+            track.consecutive_hits = 0
+            track.current_time = current_time
 
             if track.status == TrackStatus.CONFIRMED:
                 track.status = TrackStatus.COASTING
 
             # Delete if too many misses
-            if track.misses > self.max_misses:
+            if track.misses >= self.max_misses:
                 track.status = TrackStatus.DELETED
 
             # Still update history with predicted position
@@ -271,46 +292,47 @@ class TrackManager:
             - unassigned_detections: [detection indices]
             - unassigned_tracks: [track ids]
         """
-        associations = {}
-        assigned_detections = set()
-        assigned_tracks = set()
-
         if not detections or not self.tracks:
             return (
-                associations,
+                {},
                 list(range(len(detections))),
                 list(self.tracks.keys()),
             )
 
-        # Build distance matrix
         track_ids = [
             tid for tid, t in self.tracks.items() if t.status != TrackStatus.DELETED
         ]
-
-        for track_id in track_ids:
+        cost = np.full((len(track_ids), len(detections)), np.inf)
+        for row, track_id in enumerate(track_ids):
             track = self.tracks[track_id]
-            track_pos = track.position
-
-            min_dist = float("inf")
-            best_det = -1
-
-            for det_idx, det in enumerate(detections):
-                if det_idx in assigned_detections:
+            innovation_covariance = (
+                self.kf.H @ track.state.P @ self.kf.H.T + self.kf.R
+            )
+            for col, detection in enumerate(detections):
+                innovation = np.asarray(detection) - np.asarray(track.position)
+                euclidean_distance = float(np.linalg.norm(innovation))
+                if euclidean_distance > self.gate_distance:
                     continue
-
-                dist = np.sqrt(
-                    (det[0] - track_pos[0]) ** 2 + (det[1] - track_pos[1]) ** 2
+                nis = float(
+                    innovation
+                    @ np.linalg.solve(innovation_covariance, innovation)
                 )
+                if nis <= self.gate_threshold:
+                    cost[row, col] = nis
 
-                # Gating
-                if dist < self.gate_distance and dist < min_dist:
-                    min_dist = dist
-                    best_det = det_idx
-
-            if best_det >= 0:
-                associations[track_id] = best_det
-                assigned_detections.add(best_det)
+        associations: Dict[int, int] = {}
+        assigned_detections = set()
+        assigned_tracks = set()
+        if np.isfinite(cost).any():
+            assignment_cost = np.where(np.isfinite(cost), cost, 1e12)
+            rows, columns = linear_sum_assignment(assignment_cost)
+            for row, col in zip(rows, columns):
+                if not np.isfinite(cost[row, col]):
+                    continue
+                track_id = track_ids[row]
+                associations[track_id] = int(col)
                 assigned_tracks.add(track_id)
+                assigned_detections.add(int(col))
 
         unassigned_detections = [
             i for i in range(len(detections)) if i not in assigned_detections
@@ -328,7 +350,14 @@ class TrackManager:
         """Create a new track from unassigned detection."""
         state = self.kf.initialize(measurement)
 
-        track = Track(id=self._next_id, state=state, status=TrackStatus.TENTATIVE)
+        track = Track(
+            id=self._next_id,
+            state=state,
+            status=TrackStatus.TENTATIVE,
+            creation_time=self.current_time,
+            last_update=self.current_time,
+            current_time=self.current_time,
+        )
         track.history.append(measurement)
 
         # Copy classification if available
@@ -345,8 +374,9 @@ class TrackManager:
         return track
 
     def get_confirmed_tracks(self) -> List[Track]:
-        """Get only confirmed tracks."""
-        return [t for t in self.tracks.values() if t.status == TrackStatus.CONFIRMED]
+        """Get established tracks, including tracks currently coasting."""
+        established = {TrackStatus.CONFIRMED, TrackStatus.COASTING}
+        return [t for t in self.tracks.values() if t.status in established]
 
     def get_track_by_id(self, track_id: int) -> Optional[Track]:
         """Get track by ID."""
@@ -356,8 +386,8 @@ class TrackManager:
         """Clear all tracks."""
         self.tracks.clear()
         self._next_id = 1
+        self.current_time = 0.0
 
-    # ═══ PHASE 27: EKF Control ═══
 
     def set_ekf_mode(self, enabled: bool) -> None:
         """
@@ -409,7 +439,10 @@ class TrackManager:
             ]
             return self.update(cartesian, dt)
 
-        current_time = time.time()
+        if dt <= 0.0:
+            raise ValueError("dt must be positive")
+        self.current_time += dt
+        current_time = self.current_time
 
         # 1. Predict all tracks
         for track in self.tracks.values():
@@ -439,11 +472,13 @@ class TrackManager:
             track.state = self._ekf.update(track.state, z_polar, snr_db=snr)
             track.last_update = current_time
             track.hits += 1
+            track.consecutive_hits += 1
             track.misses = 0
+            track.current_time = current_time
 
             if (
                 track.status == TrackStatus.TENTATIVE
-                and track.hits >= self.confirm_hits
+                and track.consecutive_hits >= self.confirm_hits
             ):
                 track.status = TrackStatus.CONFIRMED
             elif track.status == TrackStatus.COASTING:
@@ -457,9 +492,11 @@ class TrackManager:
         for track_id in unassigned_tracks:
             track = self.tracks[track_id]
             track.misses += 1
+            track.consecutive_hits = 0
+            track.current_time = current_time
             if track.status == TrackStatus.CONFIRMED:
                 track.status = TrackStatus.COASTING
-            if track.misses > self.max_misses:
+            if track.misses >= self.max_misses:
                 track.status = TrackStatus.DELETED
             track.history.append(track.position)
             if len(track.history) > self.max_history:
@@ -469,7 +506,14 @@ class TrackManager:
         for det_idx in unassigned_dets:
             r_m, theta_rad = polar_detections[det_idx]
             state = self._ekf.initialize_from_polar(r_m, theta_rad)
-            track = Track(id=self._next_id, state=state, status=TrackStatus.TENTATIVE)
+            track = Track(
+                id=self._next_id,
+                state=state,
+                status=TrackStatus.TENTATIVE,
+                creation_time=self.current_time,
+                last_update=self.current_time,
+                current_time=self.current_time,
+            )
             cart_pos = (r_m * np.cos(theta_rad), r_m * np.sin(theta_rad))
             track.history.append(cart_pos)
             self.tracks[self._next_id] = track

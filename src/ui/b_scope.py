@@ -90,7 +90,7 @@ class BScope(QWidget):
         self.target_data: Dict[int, Dict] = {}
         self.selected_target_id: Optional[int] = None
 
-        # ECM strobe storage (Phase 23)
+        # ECM strobe storage
         self.ecm_strobes = []  # List of LinearRegionItems
         self.active_jammer_azimuths = []  # Jammer azimuth angles
 
@@ -192,7 +192,7 @@ class BScope(QWidget):
         )
         self.plot_widget.addItem(self.selected_marker)
 
-        # ═══ PHASE 23: ECM STROBE ITEMS ═══
+        # ECM strobe items
         # Create a pool of strobe items (will be shown/hidden as needed)
         self.strobe_pool = []
         for i in range(5):  # Support up to 5 simultaneous jammers
@@ -338,7 +338,7 @@ class BScope(QWidget):
             f"FOV: {self.azimuth_limits[0]:.0f}° to {self.azimuth_limits[1]:.0f}°"
         )
 
-        # ═══ PHASE 23: ECM STROBE VISUALIZATION ═══
+        # ECM strobe visualization
         self._update_ecm_strobes(state)
 
         self.last_update_time = current_time

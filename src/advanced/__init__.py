@@ -17,31 +17,23 @@ __all__ = [
     "AdvancedSensorFusion",
     "SensorMeasurement",
     "AdvancedSignalProcessor",
-    # Phase 28: ECCM
     "ECCMController",
     "FrequencyAgility",
     "PRFStagger",
-    # Phase 30: SAR/ISAR & AI Director
+    # SAR/ISAR imaging
     "ISARProcessor",
     "SARImageResult",
     "rda_vectorized",
-    "AIDirector",
-    "Difficulty",
 ]
 
-# Phase 28: ECCM (conditional for backward compatibility)
+# Optional import retained for installations using the ECCM controller.
 try:
     from .eccm import ECCMController, FrequencyAgility, PRFStagger
 except ImportError:
     pass
 
-# Phase 30: SAR/ISAR & AI Director (conditional)
+# SAR/ISAR imaging (conditional)
 try:
     from .sar_isar import ISARProcessor, SARImageResult, rda_vectorized
-except ImportError:
-    pass
-
-try:
-    from .ai_director import AIDirector, Difficulty
 except ImportError:
     pass

@@ -378,7 +378,7 @@ class ClutterModel:
         Rain radar reflectivity using Marshall-Palmer Z-R relationship.
 
         Z = 200 * R^1.6 (mm^6/m^3)
-        η = π^5 * |K|^2 * Z / λ^4 (m^-1)
+        Eta = pi^5 * K_squared * Z / lambda^4 (m^-1)
 
         Args:
             rain_rate_mm_hr: Rain rate [mm/hr]

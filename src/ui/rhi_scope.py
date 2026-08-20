@@ -137,7 +137,6 @@ class RHIScope(QWidget):
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
 
         # Style axes
-        axis_style = {"color": "#00aa55", "font-size": "10pt"}
         self.plot_widget.getAxis("bottom").setStyle(tickFont=QFont("Consolas", 9))
         self.plot_widget.getAxis("left").setStyle(tickFont=QFont("Consolas", 9))
         self.plot_widget.getAxis("bottom").setPen(pg.mkPen("#00aa55", width=1))
@@ -287,8 +286,6 @@ class RHIScope(QWidget):
             state: State dictionary containing targets and terrain data
         """
         targets = state.get("targets", [])
-        current_time = state.get("time", 0)
-
         # Filter targets near current azimuth (±10° sector)
         detected_ranges = []
         detected_alts = []

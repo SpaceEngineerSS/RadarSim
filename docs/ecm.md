@@ -1,206 +1,52 @@
-# Electronic Countermeasures (ECM) Documentation
+# ECM, ECCM, and receiver effects
 
-This document describes the electronic warfare models implemented in RadarSim.
+RadarSim represents generic public-domain mechanisms. It does not model a named jammer, operational waveform library, threat database, or classified electronic-order-of-battle data.
 
-## Table of Contents
-- [ECM Overview](#ecm-overview)
-- [Noise Jamming](#noise-jamming)
-- [Deception Jamming](#deception-jamming)
-- [Chaff & Decoys](#chaff--decoys)
-- [Burn-Through Range](#burn-through-range)
-- [References](#references)
+## Noise jamming
 
----
+Jammer-to-signal ratio at the radar is calculated from separate one-way jammer and two-way target paths. The target echo follows \(R_t^{-4}\); direct jammer illumination follows \(R_j^{-2}\). Transmit powers, antenna gains, bandwidth sharing, target RCS, wavelength, and system losses remain explicit.
 
-## ECM Overview
+For signal-to-noise ratio \(S/N\) and jammer-to-noise ratio \(J/N\), RadarSim uses
 
-RadarSim simulates both **noise** and **deception** jamming techniques, as well as passive countermeasures.
+\[
+\frac{S}{J+N}=\frac{S/N}{1+J/N}.
+\]
 
-| ECM Type | Effect | Implementation |
-|----------|--------|----------------|
-| Noise Barrage | Raises noise floor across band | Additive power |
-| Noise Spot | Focuses on specific frequency | Additive power |
-| DRFM Repeater | Creates false targets | Ghost track injection |
-| RGPO | Range deception (delay) | Range offset |
-| VGPO | Velocity deception (Doppler) | Doppler offset |
-| Chaff | RCS masking | False scatter cloud |
+This exact linear relationship is converted back to dB. Subtracting JSR from SNR is only an interference-dominant approximation and is not used as the general formula.
 
-**Implementation:** `src/physics/ecm.py`
+Spot and barrage modes differ through effective jammer bandwidth overlap. Strobes are angular observations with configurable bearing error; they are not target-range measurements.
 
----
+## Chaff
 
-## Noise Jamming
+A chaff cloud has position, velocity, mean RCS, dispersion, deployment time, and lifetime. The simulation returns a point/volume-equivalent false echo while the cloud is active. It does not resolve individual dipoles, polarization resonance, wind shear, or cloud microphysics.
 
-### Barrage Jamming
+## DRFM deception
 
-Wideband noise that degrades SNR across the radar's entire bandwidth:
+`DRFMJammer` is a state machine with capture, track, pull-off, and hold states. Configuration includes:
 
-$$J/S = \frac{P_j G_j \lambda^2 R_t^2}{4\pi P_t G_t \sigma R_j^2}$$
+- gain over skin return;
+- capture dwell;
+- RGPO range pull rate and maximum offset;
+- VGPO Doppler pull rate and maximum offset;
+- inherent retransmission delay; and
+- RGPO or VGPO operation per jammer instance.
 
-Where:
-- $P_j$ = Jammer power (W)
-- $G_j$ = Jammer antenna gain
-- $R_t$ = Range to target
-- $R_j$ = Range to jammer
-- $\sigma$ = Target RCS
+Range delay and apparent offset obey \(\Delta R=c\Delta t/2\); velocity pull is mapped through \(f_d=2v/\lambda\). Pull offsets are integrated with simulation time and bounded by the configured maxima. False-target positions are generated along the instantaneous radar-to-target line, so moving or displaced radars do not create world-origin artefacts.
 
-### Self-Screening Jamming
+`inject_into_cpi` applies delayed replicas without circular wrap. A replica outside the recorded CPI is truncated or absent. This prevents a delayed false target from reappearing at an impossible early range.
 
-When the jammer is on the target (self-protection):
+The model omits DRFM quantization, ADC/DAC spurs, oscillator phase noise, memory depth, threat-word recognition, antenna coupling, and waveform-specific coherent cancellation.
 
-$$J/S = \frac{P_j G_j \cdot 4\pi R^2}{P_t G_t \sigma}$$
+## Burn-through
 
-The jammer advantage increases with range $R$ (vs. $R^4$ radar disadvantage).
+Burn-through range is obtained by solving the generic radar/jammer link relationship at a requested SJNR. It is meaningful only when the assumed antenna gains, bandwidth overlap, propagation, and jammer geometry are supplied consistently. It is not a universal property of a radar or jammer.
 
-### Spot Jamming
+## Receiver hard limiting
 
-Concentrated power in narrow bandwidth:
+The simulation sums desired signal, noise, and interference power at the receiver input and compares it with `receiver_full_scale_dbm`. Above full scale, a memoryless radial limiter constrains complex-envelope magnitude while retaining phase.
 
-$$P_{j,eff} = P_j \cdot \frac{B_r}{B_j}$$
+For a zero-mean circular complex Gaussian input, the limiter diagnostic uses the corresponding Bussgang decomposition: output equals a scaled input plus uncorrelated distortion. RadarSim reports input power, limited output power, linear gain, distortion power, and saturation state. This closed-form result is exact for the assumed Gaussian input statistics; deterministic multitone or pulsed inputs require sample-level nonlinear simulation for exact spectral products.
 
-Where:
-- $B_r$ = Radar bandwidth
-- $B_j$ = Jammer bandwidth
+## ECCM interpretation
 
-More power-efficient but requires knowledge of radar frequency.
-
-**Implementation:** `src/physics/ecm.py::NoiseJammingModel`
-
----
-
-## Deception Jamming
-
-### DRFM (Digital RF Memory)
-
-Captures radar pulse, modifies it, and retransmits:
-
-```
-Radar Tx → [Capture] → [Delay/Modify] → [Retransmit]
-                ↓
-         DRFM Memory
-```
-
-Effects:
-- **Range deception**: Add time delay
-- **Velocity deception**: Add Doppler shift
-- **Multiple false targets**: Retransmit multiple copies
-
-### RGPO (Range Gate Pull-Off)
-
-Gradually increases retransmission delay to pull tracking gate off target:
-
-$$\Delta R(t) = R_0 + v_p \cdot t$$
-
-Where $v_p$ is the pull-off velocity (typically 10-100 m/s).
-
-### VGPO (Velocity Gate Pull-Off)
-
-Similar technique for Doppler tracking systems:
-
-$$\Delta f_d(t) = f_{d,0} + a_p \cdot t$$
-
-Where $a_p$ is the Doppler acceleration rate.
-
-**Implementation:** `src/physics/ecm.py::DRFMRepeater`
-
----
-
-## Chaff & Decoys
-
-### Chaff
-
-Dipole reflectors cut to radar wavelength:
-
-$$\sigma_{chaff} = N \cdot 0.18 \lambda^2$$
-
-Where $N$ is the number of dipoles.
-
-**Bloom dynamics:**
-- Initial cloud: ~50m radius
-- Expansion: ~5 m/s radial
-- Settling: Falls ~3 m/s
-
-### Towed Decoys
-
-Active or passive decoys towed behind aircraft:
-- Larger RCS than platform
-- Offset position
-- May have DRFM repeater
-
-**Implementation:** `src/physics/ecm.py::ChaffCloud`
-
----
-
-## Burn-Through Range
-
-The range at which radar SNR overcomes jammer power:
-
-$$R_{BT} = \sqrt[4]{\frac{P_t G_t \sigma B_j}{P_j G_j (4\pi)^2 (S/J)_{min}}}$$
-
-Where $(S/J)_{min}$ is the minimum required signal-to-jammer ratio (typically 0 dB for detection).
-
-### Factors Affecting Burn-Through
-
-| Factor | Effect on $R_{BT}$ |
-|--------|-------------------|
-| ↑ $P_t$ (Radar power) | ↑ Increases |
-| ↑ $G_t$ (Radar gain) | ↑ Increases |
-| ↑ $\sigma$ (Target RCS) | ↑ Increases |
-| ↑ $P_j$ (Jammer power) | ↓ Decreases |
-| ↑ $G_j$ (Jammer gain) | ↓ Decreases |
-
-### Implementation
-
-```python
-def calculate_burn_through_range(
-    radar_power_w: float,
-    radar_gain_db: float,
-    target_rcs_m2: float,
-    jammer_power_w: float,
-    jammer_gain_db: float,
-    sj_min_db: float = 0.0
-) -> float:
-    """Calculate burn-through range in meters."""
-    
-    G_t = 10 ** (radar_gain_db / 10)
-    G_j = 10 ** (jammer_gain_db / 10)
-    sj_min = 10 ** (sj_min_db / 10)
-    
-    numerator = radar_power_w * G_t * target_rcs_m2
-    denominator = jammer_power_w * G_j * (4 * np.pi) ** 2 * sj_min
-    
-    return (numerator / denominator) ** 0.25
-```
-
----
-
-## ECCM (Counter-Countermeasures)
-
-RadarSim models these ECCM techniques:
-
-| ECCM | Description |
-|------|-------------|
-| Frequency Agility | Hop frequencies to avoid spot jamming |
-| PRF Jitter | Randomize PRF to defeat DRFM synchronization |
-| Sidelobe Blanking | Ignore returns from sidelobe angles |
-| Burn-Through | Increase power to overcome jamming |
-
----
-
-## References
-
-1. **Adamy, D.L.** (2001). *EW 101: A First Course in Electronic Warfare*. Artech House.
-   - Complete ECM/ECCM taxonomy
-
-2. **Schleher, D.C.** (1999). *Electronic Warfare in the Information Age*. Artech House.
-   - Burn-through range derivation
-
-3. **Poisel, R.A.** (2011). *Modern Communications Jamming*. Artech House.
-   - Digital RF countermeasures
-
-4. **Neri, F.** (2006). *Introduction to Electronic Defense Systems*, 2nd Ed. SciTech.
-   - RGPO/VGPO techniques
-
----
-
-*Document generated for RadarSim v1.0.0*
+Frequency agility, sidelobe control, CFAR, MTI, tracking gates, and receiver headroom can be explored as counter-countermeasure mechanisms, but RadarSim does not automatically claim that a detection is “ECCM successful.” Evaluation should compare controlled runs using fixed seeds and state the metric: achieved detection probability, false-track rate, track covariance, coast duration, or image quality.

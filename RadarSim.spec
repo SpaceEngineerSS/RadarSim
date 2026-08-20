@@ -1,22 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
-# Collect data files for critical dependencies
 datas = []
 
-# Collect sklearn data files if available
-try:
-    datas += collect_data_files('sklearn')
-except Exception:
-    pass
-
-# Manual data collection for project assets
-project_assets = ['scenarios', 'resources', 'models', 'data']
+# Package the built-in scenarios with the desktop application.
+project_assets = ['scenarios']
 for asset in project_assets:
     if os.path.exists(asset):
         datas.append((asset, asset))
@@ -31,26 +22,18 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
+        'PySide6.QtCore',
+        'PySide6.QtGui',
+        'PySide6.QtWidgets',
         'pyqtgraph',
+        'pyqtgraph.opengl',
+        'OpenGL',
         'numpy',
         'scipy',
-        'pandas',
         'yaml',
         'matplotlib',
         'numba',
         'h5py',
-        'psutil',
-        'tqdm',
-        'joblib',
-        'sklearn',
-        'sklearn.utils._cython_blas',
-        'sklearn.utils._typedefs',
-        'sklearn.neighbors.typedefs',
-        'sklearn.neighbors.quad_tree',
-        'sklearn.tree._utils',
         'src',
     ],
     hookspath=[],

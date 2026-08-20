@@ -60,7 +60,6 @@ __all__ = [
     # ECM
     "ECMSimulator",
     "ECMType",
-    # Phase 28: DRFM Jammer
     "DRFMJammer",
     "DRFMState",
 ]

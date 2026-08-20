@@ -1,7 +1,7 @@
 """
 Splash Screen for RadarSim
 
-Professional loading screen displayed during application startup.
+Loading screen displayed during application startup.
 
 Features:
     - Dark theme matching main application
@@ -16,12 +16,12 @@ from PySide6.QtWidgets import QSplashScreen
 
 class RadarSimSplash(QSplashScreen):
     """
-    Professional splash screen for RadarSim.
+    Splash screen for RadarSim.
 
     Displays loading progress with stage messages.
     """
 
-    VERSION = "1.0.0"
+    VERSION = "3.0.0"
 
     STAGES = [
         "Initializing Core Systems...",

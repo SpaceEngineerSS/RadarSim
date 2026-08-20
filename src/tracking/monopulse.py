@@ -231,7 +231,10 @@ class MonopulseEstimator:
         Returns:
             Improvement factor (ratio of beam accuracy to monopulse accuracy)
         """
-        snr_linear = 10 ** (snr_db / 10)
+        if not np.isfinite(snr_db):
+            raise ValueError("snr_db must be finite")
+        if beamwidth_deg <= 0.0 or not np.isfinite(beamwidth_deg):
+            raise ValueError("beamwidth_deg must be finite and positive")
         km = 1.6  # Typical monopulse slope
 
         # Without monopulse: accuracy ~ beamwidth / sqrt(SNR)

@@ -84,10 +84,10 @@ class TacticalMap3D(QWidget):
         self.radar_marker: Optional[GLScatterPlotItem] = None
         self.beam_mesh: Optional[GLMeshItem] = None
 
-        # ═══ PHASE 27: EKF Uncertainty Ellipses ═══
+        # EKF uncertainty ellipses
         self._ellipse_items: Dict[int, GLLinePlotItem] = {}
 
-        # ═══ PHASE 29: Network Fusion ═══
+        # Network fusion
         self._fused_scatter: Optional[GLScatterPlotItem] = None
         self._fused_ellipse_items: Dict[int, GLLinePlotItem] = {}
         self._jammer_scatter: Optional[GLScatterPlotItem] = None
@@ -385,10 +385,10 @@ class TacticalMap3D(QWidget):
                     pos=pos_array, size=size_array, color=color_array
                 )
 
-        # ═══ PHASE 27: EKF Uncertainty Ellipses ═══
+        # EKF uncertainty ellipses
         self._render_uncertainty_ellipses(state)
 
-        # ═══ PHASE 29: Network Fusion Visualization ═══
+        # Network-fusion visualization
         self._render_fused_tracks(state)
         self._render_jammer_positions(state)
 
@@ -492,7 +492,7 @@ class TacticalMap3D(QWidget):
             )
 
     # ═══════════════════════════════════════════════════════════════
-    # PHASE 29: NETWORK FUSION VISUALIZATION
+    # Network-fusion visualization
     # ═══════════════════════════════════════════════════════════════
 
     def _render_fused_tracks(self, state: Dict[str, Any]) -> None:

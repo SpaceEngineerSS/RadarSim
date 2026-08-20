@@ -1,305 +1,159 @@
-"""
-RadarSim API Examples
+"""Executable examples for RadarSim's public scientific APIs."""
 
-Usage examples demonstrating the radar simulation API.
-"""
+from __future__ import annotations
 
-import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.io.scenario_loader import ScenarioLoader
+from src.physics.atmospheric import ITU_R_P676
+from src.physics.metrics import albersheim_snr, calculate_pd_swerling
+from src.physics.radar_equation import (
+    RadarParameters,
+    calculate_doppler_shift,
+    calculate_received_power,
+    calculate_snr,
+)
+from src.physics.rcs import SwerlingModel, SwerlingRCS
+from src.signal.cfar import CFARDetector, CFARType
+from src.signal.pulse_doppler import PulseDopplerProcessor
+from src.tracking.tracker import TrackManager
 
 
-def example_basic_radar():
-    """
-    Example 1: Basic Radar Setup
-
-    Create radar parameters and calculate detection of a target.
-    """
-    from radar_physics import RadarParameters, RadarPhysics, TargetParameters
-
-    # Create X-band radar (10 GHz)
-    radar_params = RadarParameters(
-        frequency=10e9,  # 10 GHz
-        power_transmitted=1000,  # 1 kW
-        antenna_gain_tx=30,  # 30 dB
-        pulse_width=1e-6,  # 1 μs
-        prf=1000,  # 1 kHz
+def radar_equation_example() -> None:
+    radar = RadarParameters(
+        frequency=10.0e9,
+        power_transmitted=10.0e3,
+        antenna_gain_tx=35.0,
+        antenna_gain_rx=35.0,
+        noise_figure=4.0,
+        noise_bandwidth=2.0e6,
+        pulse_width=2.0e-6,
+        prf=2.0e3,
     )
-
-    physics = RadarPhysics(radar_params)
-
-    # Create target at 20 km range
-    target = TargetParameters(
-        position=np.array([20000.0, 0.0, 5000.0]),  # 20 km, 5 km altitude
-        velocity=np.array([-200.0, 0.0, 0.0]),  # 200 m/s approaching
-        rcs=10.0,  # 10 m² RCS
+    range_m = 25.0e3
+    rcs_m2 = 3.0
+    received_w = calculate_received_power(radar, rcs_m2, range_m)
+    snr_db = calculate_snr(radar, rcs_m2, range_m)
+    doppler_hz = calculate_doppler_shift(
+        radar,
+        target_pos=np.array([range_m, 0.0, 2.0e3]),
+        target_vel=np.array([-180.0, 0.0, 0.0]),
     )
-
-    radar_pos = np.array([0.0, 0.0, 0.0])
-    radar_vel = np.array([0.0, 0.0, 0.0])
-
-    # Calculate metrics
-    range_m = physics.calculate_range(target.position, radar_pos)
-    snr_db = physics.calculate_snr(target, radar_pos)
-    doppler_hz = physics.doppler_shift(target, radar_pos, radar_vel)
-
-    print("=== Basic Radar Example ===")
-    print(f"Target Range: {range_m / 1000:.1f} km")
-    print(f"SNR: {snr_db:.1f} dB")
-    print(f"Doppler Shift: {doppler_hz:.0f} Hz")
-    print(f"Radial Velocity: {doppler_hz * radar_params.wavelength / 2:.1f} m/s")
+    print(f"Radar equation: Pr={received_w:.3e} W, SNR={snr_db:.2f} dB")
+    print(f"Doppler: {doppler_hz:.2f} Hz (negative means approaching)")
 
 
-def example_atmospheric_attenuation():
-    """
-    Example 2: ITU-R P.676 Atmospheric Attenuation
+def propagation_and_detection_example() -> None:
+    for frequency_ghz in (10.0, 22.235, 60.0, 94.0):
+        loss_db = ITU_R_P676.total_attenuation(
+            range_km=10.0,
+            frequency_ghz=frequency_ghz,
+            two_way=True,
+        )
+        print(f"Gas loss at {frequency_ghz:6.3f} GHz: {loss_db:8.3f} dB")
 
-    Calculate atmospheric loss for different frequencies.
-    """
-    from radar_physics import ITU_R_P676
-
-    print("\n=== Atmospheric Attenuation (ITU-R P.676) ===")
-
-    frequencies_ghz = [1, 5, 10, 22, 35, 60, 94]
-    range_km = 10.0
-
-    print(f"Range: {range_km} km (two-way)")
-    print("-" * 40)
-
-    for freq in frequencies_ghz:
-        attenuation = ITU_R_P676.total_attenuation(range_km, freq, two_way=True)
-        print(f"  {freq:3d} GHz: {attenuation:6.2f} dB")
-
-
-def example_swerling_rcs():
-    """
-    Example 3: Swerling RCS Fluctuation Models
-
-    Generate fluctuating RCS values for different Swerling models.
-    """
-    from radar_physics import SwerlingModel, SwerlingRCS
-
-    print("\n=== Swerling RCS Models ===")
-
-    mean_rcs = 10.0  # 10 m²
-    n_samples = 1000
-
-    models = [
-        SwerlingModel.SWERLING_0,
-        SwerlingModel.SWERLING_1,
-        SwerlingModel.SWERLING_2,
-        SwerlingModel.SWERLING_3,
-        SwerlingModel.SWERLING_4,
-    ]
-
-    print(f"Mean RCS: {mean_rcs} m²")
-    print("-" * 50)
-
-    for model in models:
-        samples = [SwerlingRCS.generate_rcs(mean_rcs, model) for _ in range(n_samples)]
-        mean_measured = np.mean(samples)
-        std_measured = np.std(samples)
-
-        print(f"  {model.name}: Mean={mean_measured:.2f}, Std={std_measured:.2f}")
-
-
-def example_ekf_tracking():
-    """
-    Example 4: Extended Kalman Filter Tracking
-
-    Track a target using the EKF with polar measurements.
-    """
-    from radar_physics import RadarParameters, RadarPhysics, TargetParameters
-    from target_tracking import ExtendedKalmanFilter, MotionModel, TrackState
-
-    print("\n=== EKF Tracking Example ===")
-
-    # Create EKF
-    ekf = ExtendedKalmanFilter(dt=0.1, motion_model=MotionModel.CONSTANT_VELOCITY)
-
-    # Initial track state
-    track = TrackState(
-        position=np.array([10000.0, 0.0, 5000.0]),
-        velocity=np.array([-100.0, 0.0, 0.0]),
-        acceleration=np.zeros(3),
-        covariance=np.eye(6) * 100,
-        track_id=1,
-        target_type="aircraft",
-        rcs=10.0,
-        last_update=0.0,
-        track_quality=0.5,
-        detection_count=1,
+    required_snr = albersheim_snr(pd=0.9, pfa=1e-6, n_pulses=8)
+    actual_pd = calculate_pd_swerling(
+        snr_db=required_snr,
+        pfa=1e-6,
+        swerling_case=1,
+        n_pulses=8,
     )
-
-    print(f"Initial Position: {track.position}")
-
-    # Simulate 5 steps
-    for step in range(5):
-        # Predict
-        track = ekf.predict(track)
-        print(f"Step {step + 1} - Predicted X: {track.position[0]:.1f} m")
+    print(f"Albersheim SNR={required_snr:.2f} dB; Swerling-I Pd={actual_pd:.4f}")
 
 
-def example_ecm_simulation():
-    """
-    Example 5: ECM Simulation
+def swerling_example() -> None:
+    state = np.random.get_state()
+    np.random.seed(20260820)
+    try:
+        for model in SwerlingModel:
+            samples = np.array(
+                [SwerlingRCS.generate_rcs(10.0, model) for _ in range(20_000)]
+            )
+            print(
+                f"{model.name}: mean={samples.mean():.3f} m^2, "
+                f"std={samples.std():.3f} m^2"
+            )
+    finally:
+        np.random.set_state(state)
 
-    Demonstrate ECM effects on radar detection.
-    """
-    from ecm_simulation import ECMSimulator
-    from radar_physics import RadarParameters, RadarPhysics, TargetParameters
 
-    print("\n=== ECM Simulation Example ===")
-
-    # Setup
-    radar_params = RadarParameters(
-        frequency=10e9, power_transmitted=1000, antenna_gain_tx=30
+def pulse_doppler_and_cfar_example() -> None:
+    processor = PulseDopplerProcessor(
+        prf_hz=4.0e3,
+        n_pulses=64,
+        n_range_bins=2048,
+        bandwidth_hz=5.0e6,
+        sample_rate_hz=10.0e6,
+        pulse_width_s=8.0e-6,
+        frequency_hz=10.0e9,
+        window_type="hamming",
     )
-    physics = RadarPhysics(radar_params)
-    ecm = ECMSimulator(physics)
-
-    target = TargetParameters(
-        position=np.array([15000.0, 0.0, 5000.0]),
-        velocity=np.array([-150.0, 0.0, 0.0]),
-        rcs=10.0,
+    amplitude = processor.amplitude_for_output_snr(100.0, noise_power=1.0)
+    rd_map = processor.process_cpi(
+        target_ranges_m=np.array([12_000.0]),
+        target_velocities_mps=np.array([-45.0]),
+        target_amplitudes=np.array([amplitude]),
+        noise_power=1.0,
+        seed=42,
     )
-
-    radar_pos = np.array([0.0, 0.0, 0.0])
-
-    # Without jamming
-    snr_clear = physics.calculate_snr(target, radar_pos)
-    print(f"SNR (no ECM): {snr_clear:.1f} dB")
-
-    # Activate noise jamming
-    ecm.activate_noise_jamming(
-        jammer_position=np.array([14000.0, 0.0, 5000.0]),
-        jammer_power=500.0,
-        frequency_offset=0.0,
-    )
-
-    # Calculate jammed signal
-    received_power = physics.radar_equation(target, radar_pos)
-    jammer_distance = physics.calculate_range(ecm.jammer_position, radar_pos)
-    jammed_power = ecm.apply_noise_jamming(received_power, jammer_distance)
-
-    # Jamming effectiveness
-    jamming_loss_db = (
-        10 * np.log10(received_power / jammed_power)
-        if jammed_power > 0
-        else float("inf")
-    )
-    print(f"Jamming Loss: {jamming_loss_db:.1f} dB")
-
-    # RGPO demonstration
-    ecm.activate_rgpo(pull_rate=100.0, max_offset=5000.0)
-
-    for t in range(5):
-        offset = ecm.update_rgpo(1.0)
-        print(f"RGPO t={t + 1}s: Range Offset = {offset:.0f} m")
-
-
-def example_cfar_detection():
-    """
-    Example 6: CA-CFAR Detection
-
-    Demonstrate constant false alarm rate detection.
-    """
-    from ecm_simulation import ECCMSystem
-
-    print("\n=== CA-CFAR Detection Example ===")
-
-    eccm = ECCMSystem()
-
-    # Create synthetic range profile with noise and targets
-    np.random.seed(42)
-    num_cells = 100
-    noise = np.random.exponential(1.0, num_cells)
-
-    # Add two targets
-    target_bins = [25, 67]
-    for bin_idx in target_bins:
-        noise[bin_idx] = 30.0  # Strong target return
-
-    # Run CFAR
-    detections, thresholds = eccm.cfar_detection(noise, pfa=1e-4)
-
-    print(f"Range cells: {num_cells}")
-    print(f"Target bins: {target_bins}")
-    print(f"Detected bins: {detections}")
+    peak = np.unravel_index(np.argmax(rd_map.data_linear), rd_map.data_linear.shape)
     print(
-        f"Detection rate: {len(set(target_bins) & set(detections)) / len(target_bins) * 100:.0f}%"
+        f"Range-Doppler peak: R={rd_map.range_axis_m[peak[1]]:.1f} m, "
+        f"v={rd_map.velocity_axis_mps[peak[0]]:.2f} m/s"
     )
 
-
-def example_proportional_navigation():
-    """
-    Example 7: Proportional Navigation Guidance
-
-    Calculate missile guidance commands.
-    """
-    from target_tracking import GuidanceSystem, TrackState
-
-    print("\n=== Proportional Navigation Example ===")
-
-    guidance = GuidanceSystem()
-
-    # Missile state
-    missile = TrackState(
-        position=np.array([0.0, 0.0, 0.0]),
-        velocity=np.array([500.0, 0.0, 0.0]),  # Mach 1.5
-        acceleration=np.zeros(3),
-        covariance=np.eye(6),
-        track_id=0,
-        target_type="missile",
-        rcs=0.1,
-        last_update=0.0,
-        track_quality=1.0,
-        detection_count=1,
+    profile = rd_map.data_linear[:, peak[1]]
+    detector = CFARDetector(
+        guard_cells=2,
+        reference_cells=8,
+        pfa=1e-4,
+        cfar_type=CFARType.CA,
     )
+    detections, _ = detector.detect(profile)
+    print(f"CFAR detections in target range cell: {np.flatnonzero(detections).tolist()}")
 
-    # Target state (aircraft, crossing)
-    target = TrackState(
-        position=np.array([8000.0, 2000.0, 1000.0]),
-        velocity=np.array([-200.0, 100.0, 0.0]),
-        acceleration=np.zeros(3),
-        covariance=np.eye(6),
-        track_id=1,
-        target_type="aircraft",
-        rcs=10.0,
-        last_update=0.0,
-        track_quality=1.0,
-        detection_count=1,
+
+def tracking_example() -> None:
+    manager = TrackManager(
+        gate_distance=500.0,
+        confirm_hits=3,
+        max_misses=3,
+        measurement_noise=25.0,
     )
-
-    # Calculate guidance
-    accel_cmd = guidance.calculate_guidance_command(missile, target)
-    intercept_point, tgo = guidance.calculate_intercept_point(missile, target)
-
+    for index in range(5):
+        tracks = manager.update([(1000.0 + 20.0 * index, 2000.0)], dt=1.0)
+    track = tracks[0]
     print(
-        f"Guidance Acceleration: [{accel_cmd[0]:.1f}, {accel_cmd[1]:.1f}, {accel_cmd[2]:.1f}] m/s²"
+        f"Track {track.id}: status={track.status.value}, "
+        f"position=({track.position[0]:.1f}, {track.position[1]:.1f}) m"
     )
-    print(f"Acceleration Magnitude: {np.linalg.norm(accel_cmd):.1f} m/s²")
+
+
+def scenario_example() -> None:
+    loader = ScenarioLoader("scenarios/basic_tracking.json")
+    config = loader.get_config()
+    engine = loader.create_simulation_engine()
+    detections = engine.step()
     print(
-        f"Predicted Intercept: [{intercept_point[0]:.0f}, {intercept_point[1]:.0f}, {intercept_point[2]:.0f}] m"
+        f"Scenario '{config.name}': {len(config.targets)} targets, "
+        f"first-step detections={len(detections)}"
     )
-    print(f"Time to Go: {tgo:.1f} s")
+
+
+def main() -> None:
+    radar_equation_example()
+    propagation_and_detection_example()
+    swerling_example()
+    pulse_doppler_and_cfar_example()
+    tracking_example()
+    scenario_example()
 
 
 if __name__ == "__main__":
-    print("RadarSim API Examples")
-    print("=" * 60)
-
-    example_basic_radar()
-    example_atmospheric_attenuation()
-    example_swerling_rcs()
-    example_ekf_tracking()
-    example_ecm_simulation()
-    example_cfar_detection()
-    example_proportional_navigation()
-
-    print("\n" + "=" * 60)
-    print("All examples completed successfully!")
+    main()

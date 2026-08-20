@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
+from scipy.signal import windows
 
 from src.physics.constants import SPEED_OF_LIGHT
 
@@ -105,48 +106,15 @@ class PhasedArrayAntenna:
             return np.ones(n_elements)
 
         elif weighting == "taylor":
-            # Taylor one-parameter distribution
-            # Reference: Taylor, 1955
-            n = np.arange(n_elements)
-            n_centered = n - (n_elements - 1) / 2
-
-            # Sidelobe ratio
-            r = 10 ** (-sidelobe_db / 20)
-
-            # Taylor parameter A
-            A = np.arccosh(r) / np.pi
-
-            # Number of side-lobes at design level (n-bar)
-            n_bar = int(2 * A**2 + 0.5)
+            sidelobe_level = abs(float(sidelobe_db))
+            if sidelobe_level <= 0.0:
+                raise ValueError("Taylor sidelobe level must be nonzero")
+            a_parameter = np.arccosh(10 ** (sidelobe_level / 20.0)) / np.pi
+            n_bar = int(2 * a_parameter**2 + 0.5)
             n_bar = max(2, min(n_bar, n_elements // 2))
-
-            # Compute coefficients
-            weights = np.ones(n_elements)
-            sigma_m = n_bar / np.sqrt(A**2 + (n_bar - 0.5) ** 2)
-
-            for m in range(1, n_bar):
-                numerator = 1.0
-                for n_idx in range(1, n_bar):
-                    if n_idx != m:
-                        numerator *= 1 - (m / n_idx) ** 2
-
-                denominator = 1.0
-                for n_idx in range(1, n_bar):
-                    if n_idx != m:
-                        x = A**2 + (n_idx - 0.5) ** 2
-                        y = A**2 + (m - 0.5) ** 2
-                        denominator *= 1 - x / y if y != 0 else 1
-
-                F_m = (
-                    ((-1) ** (m + 1)) * numerator / (2 * denominator)
-                    if denominator != 0
-                    else 0
-                )
-
-                for i, nc in enumerate(n_centered):
-                    weights[i] *= 1 + 2 * F_m * np.cos(2 * np.pi * m * nc / n_elements)
-
-            return weights / np.max(weights)
+            return windows.taylor(
+                n_elements, nbar=n_bar, sll=sidelobe_level, norm=True, sym=True
+            )
 
         elif weighting == "chebyshev":
             # Dolph-Chebyshev weights

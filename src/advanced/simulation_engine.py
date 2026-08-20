@@ -204,12 +204,6 @@ class AdvancedRadarSimulationEngine:
 
     def process_radar(self) -> None:
         """Radar işlemlerini gerçekleştirir"""
-        # Radar beam yönü (basitleştirilmiş tarama)
-        beam_angle = (self.state.timestamp * 30) % 360  # 30°/s tarama
-        beam_direction = np.array(
-            [np.cos(np.radians(beam_angle)), np.sin(np.radians(beam_angle)), 0]
-        )
-
         # LPI dalga şekli
         if self.config.lpi_enabled:
             lpi_waveform = self.lpi_radar.generate_lpi_waveform(
@@ -251,30 +245,31 @@ class AdvancedRadarSimulationEngine:
         self.state.detections = detections
 
     def process_sensor_fusion(self) -> None:
-        """Sensör füzyonu işlemlerini gerçekleştirir"""
+        """Fuse only measurements that belong to the same target."""
         if not self.state.detections:
             return
 
-        # Sensör ölçümlerini hazırla
-        measurements = []
+        measurements_by_target: Dict[str, List[SensorMeasurement]] = {}
         for detection in self.state.detections:
+            target_id = str(detection.get("target_id", "unknown"))
             measurement = SensorMeasurement(
-                sensor_id="radar_main",
+                sensor_id=str(detection.get("sensor_id", "radar_main")),
                 timestamp=detection["timestamp"],
                 position=detection["position"],
                 velocity=detection["velocity"],
                 measurement_type="radar",
-                uncertainty=np.eye(6) * 10,  # Basitleştirilmiş belirsizlik
+                uncertainty=np.asarray(
+                    detection.get("uncertainty", np.eye(6) * 10.0), dtype=float
+                ),
                 confidence=0.9,
+                target_id=target_id,
             )
-            measurements.append(measurement)
+            measurements_by_target.setdefault(target_id, []).append(measurement)
 
-        # Sensör füzyonu uygula
-        fusion_result = self.sensor_fusion.adaptive_fusion(measurements)
-
-        # Füzyon sonuçlarını takip sistemine entegre et
-        if fusion_result:
-            self.update_tracking_system(fusion_result)
+        for target_id, measurements in measurements_by_target.items():
+            fusion_result = self.sensor_fusion.fuse(measurements)
+            if fusion_result:
+                self.update_tracking_system(fusion_result, target_id)
 
     def process_sar_isar(self) -> None:
         """SAR/ISAR işlemlerini gerçekleştirir"""
@@ -360,21 +355,28 @@ class AdvancedRadarSimulationEngine:
                         self.state.missiles.remove(missile)
                     break
 
-    def update_tracking_system(self, fusion_result: Dict[str, Any]) -> None:
-        """Takip sistemini günceller"""
-        # Basitleştirilmiş takip sistemi
+    def update_tracking_system(
+        self, fusion_result: Dict[str, Any], target_id: str = "unknown"
+    ) -> None:
+        """Update or create the track represented by a fused estimate."""
         fused_state = fusion_result.get("fused_state", None)
         if fused_state is not None:
             track = {
-                "id": f"track_{len(self.state.tracks)}",
+                "id": f"track_{target_id}",
+                "target_id": target_id,
                 "position": fused_state[:3],
                 "velocity": fused_state[3:6],
-                "timestamp": self.state.timestamp,
+                "covariance": fusion_result.get("fused_covariance"),
+                "timestamp": fusion_result.get("timestamp", self.state.timestamp),
                 "fusion_method": fusion_result.get("fusion_method", "unknown"),
             }
-            self.state.tracks.append(track)
+            for index, existing in enumerate(self.state.tracks):
+                if existing.get("target_id") == target_id:
+                    self.state.tracks[index] = track
+                    break
+            else:
+                self.state.tracks.append(track)
 
-            # Eski takipleri temizle
             current_time = self.state.timestamp
             self.state.tracks = [
                 t for t in self.state.tracks if current_time - t["timestamp"] < 10.0

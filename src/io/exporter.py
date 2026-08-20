@@ -82,6 +82,7 @@ def _extract_radar_config(engine) -> Dict[str, Any]:
             "noise_figure_db": float(radar.noise_figure_db),
             "bandwidth_hz": float(radar.receiver_bandwidth_hz),
             "system_temperature_k": float(radar.system_temperature_k),
+            "full_scale_dbm": float(getattr(engine, "receiver_full_scale_dbm", -20.0)),
         },
         "prf_hz": float(radar.prf_hz),
         "pulse_width_s": float(radar.pulse_width_s),
@@ -131,6 +132,16 @@ def _extract_targets(engine) -> list:
             target_data["ecm_bandwidth_hz"] = float(
                 getattr(t, "jammer_bandwidth_hz", 100e6)
             )
+            target_data["drfm"] = {
+                "gain_over_skin_db": float(t.drfm_gain_over_skin_db),
+                "capture_dwell_s": float(t.drfm_capture_dwell_s),
+                "pull_rate_mps": float(t.drfm_pull_rate_mps),
+                "max_pull_m": float(t.drfm_max_pull_m),
+                "mode": str(t.drfm_mode),
+                "vgpo_rate_hz_per_s": float(t.drfm_vgpo_rate_hz_per_s),
+                "max_doppler_pull_hz": float(t.drfm_max_doppler_pull_hz),
+                "inherent_delay_s": float(t.drfm_inherent_delay_s),
+            }
 
         targets.append(target_data)
 

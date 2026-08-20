@@ -33,7 +33,6 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.physics.atmospheric import (
-    ITU_R_P676,
     validate_itu_60ghz,
     validate_itu_xband,
 )
@@ -99,7 +98,6 @@ class TestSkolnikExample21:
         noise_power = result["computed_values"]["noise_power_W"]
 
         # k * T * B * F = 1.38e-23 * 290 * 1e6 * 2 ≈ 8e-15 W
-        expected_order = 1e-14
         assert 1e-15 < noise_power < 1e-13, (
             f"Noise power ({noise_power:.2e} W) outside expected range"
         )

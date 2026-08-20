@@ -431,8 +431,6 @@ def validate_barker13_psl() -> dict:
     # Autocorrelation (matched filter output)
     # For phase-coded signals, autocorrelation gives pulse compression
     n = len(code)
-    n_fft = 2 * n - 1
-
     # Direct autocorrelation
     autocorr = np.correlate(code, code, mode="full")
 

@@ -42,6 +42,7 @@ class RadarConfig:
     noise_figure_db: float
     receiver_bandwidth_hz: float
     system_temperature_k: float
+    receiver_full_scale_dbm: float
     system_losses_db: float
     polarization_tilt_deg: float
     position: np.ndarray
@@ -79,6 +80,14 @@ class TargetConfig:
     ecm_type: str = ""
     ecm_power_watts: float = 0.0
     ecm_bandwidth_hz: float = 100e6
+    drfm_gain_over_skin_db: float = 10.0
+    drfm_capture_dwell_s: float = 2.0
+    drfm_pull_rate_mps: float = 50.0
+    drfm_max_pull_m: float = 2000.0
+    drfm_mode: str = "rgpo"
+    drfm_vgpo_rate_hz_per_s: float = 50.0
+    drfm_max_doppler_pull_hz: float = 500.0
+    drfm_inherent_delay_s: float = 0.0
 
 
 @dataclass
@@ -249,6 +258,7 @@ class ScenarioLoader:
                 )
             ),
             system_temperature_k=float(receiver.get("system_temperature_k", 290.0)),
+            receiver_full_scale_dbm=float(receiver.get("full_scale_dbm", -20.0)),
             system_losses_db=float(radar.get("system_losses_db", 4.0)),
             polarization_tilt_deg=float(antenna.get("polarization_tilt_deg", 0.0)),
             position=np.array(
@@ -267,6 +277,7 @@ class ScenarioLoader:
         for idx, t in enumerate(self.data.get("targets", [])):
             pos = t.get("initial_position", {})
             vel = t.get("velocity", {})
+            drfm = t.get("drfm", {})
 
             targets.append(
                 TargetConfig(
@@ -292,6 +303,22 @@ class ScenarioLoader:
                     ecm_type=t.get("ecm_type", ""),
                     ecm_power_watts=float(t.get("ecm_power_watts", 0)),
                     ecm_bandwidth_hz=float(t.get("ecm_bandwidth_hz", 100e6)),
+                    drfm_gain_over_skin_db=float(
+                        drfm.get("gain_over_skin_db", 10.0)
+                    ),
+                    drfm_capture_dwell_s=float(drfm.get("capture_dwell_s", 2.0)),
+                    drfm_pull_rate_mps=float(drfm.get("pull_rate_mps", 50.0)),
+                    drfm_max_pull_m=float(drfm.get("max_pull_m", 2000.0)),
+                    drfm_mode=str(drfm.get("mode", "rgpo")).lower(),
+                    drfm_vgpo_rate_hz_per_s=float(
+                        drfm.get("vgpo_rate_hz_per_s", 50.0)
+                    ),
+                    drfm_max_doppler_pull_hz=float(
+                        drfm.get("max_doppler_pull_hz", 500.0)
+                    ),
+                    drfm_inherent_delay_s=float(
+                        drfm.get("inherent_delay_s", 0.0)
+                    ),
                 )
             )
 
@@ -418,6 +445,14 @@ class ScenarioLoader:
                 jammer_power_watts=t_config.ecm_power_watts,
                 jammer_bandwidth_hz=t_config.ecm_bandwidth_hz,
                 ecm_type=t_config.ecm_type or "noise_barrage",
+                drfm_gain_over_skin_db=t_config.drfm_gain_over_skin_db,
+                drfm_capture_dwell_s=t_config.drfm_capture_dwell_s,
+                drfm_pull_rate_mps=t_config.drfm_pull_rate_mps,
+                drfm_max_pull_m=t_config.drfm_max_pull_m,
+                drfm_mode=t_config.drfm_mode,
+                drfm_vgpo_rate_hz_per_s=t_config.drfm_vgpo_rate_hz_per_s,
+                drfm_max_doppler_pull_hz=t_config.drfm_max_doppler_pull_hz,
+                drfm_inherent_delay_s=t_config.drfm_inherent_delay_s,
             )
             targets.append(target)
 
@@ -436,6 +471,7 @@ class ScenarioLoader:
             terrain_type=self._config.environment.terrain_type,
             sea_state=self._config.environment.sea_state,
             rain_rate_mm_hr=self._config.environment.rain_rate_mm_hr,
+            receiver_full_scale_dbm=self._config.radar.receiver_full_scale_dbm,
             ground_model=self._config.environment.ground_model,
             land_gamma_db=self._config.environment.land_gamma_db,
             ground_relative_permittivity=complex(

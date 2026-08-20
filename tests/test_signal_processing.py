@@ -338,7 +338,7 @@ class TestCFARDetector:
         detections, _ = detector.detect(noise)
 
         # Target should be detected
-        assert detections[target_idx] == True
+        assert detections[target_idx]
 
     def test_cfar_threshold_calculation(self):
         """Verify CFAR threshold multiplier formula"""
@@ -350,6 +350,71 @@ class TestCFARDetector:
 
         # Should be around 14 for these parameters
         assert 10 < expected_alpha < 20
+
+    @pytest.mark.parametrize(
+        "cfar_type", [CFARType.CA, CFARType.GO, CFARType.SO, CFARType.OS]
+    )
+    def test_threshold_multiplier_achieves_requested_pfa(self, cfar_type):
+        rng = np.random.default_rng(2026)
+        sample_count = 100_000
+        reference_per_side = 8
+        detector = CFARDetector(
+            guard_cells=2,
+            reference_cells=reference_per_side,
+            pfa=1e-3,
+            cfar_type=cfar_type,
+        )
+        cut = rng.exponential(size=sample_count)
+        reference = rng.exponential(
+            size=(sample_count, 2 * reference_per_side)
+        )
+        if cfar_type == CFARType.CA:
+            estimate = reference.mean(axis=1)
+        elif cfar_type == CFARType.GO:
+            estimate = np.maximum(
+                reference[:, :reference_per_side].mean(axis=1),
+                reference[:, reference_per_side:].mean(axis=1),
+            )
+        elif cfar_type == CFARType.SO:
+            estimate = np.minimum(
+                reference[:, :reference_per_side].mean(axis=1),
+                reference[:, reference_per_side:].mean(axis=1),
+            )
+        else:
+            estimate = np.partition(reference, detector.os_rank - 1, axis=1)[
+                :, detector.os_rank - 1
+            ]
+        measured = np.mean(cut > detector.threshold_multiplier * estimate)
+        standard_deviation = np.sqrt(1e-3 * (1.0 - 1e-3) / sample_count)
+        assert abs(measured - 1e-3) < 4.0 * standard_deviation
+
+    def test_true_2d_ca_cfar_detects_target_and_returns_calibrated_threshold(self):
+        rng = np.random.default_rng(9)
+        power = rng.exponential(size=(64, 96))
+        power[32, 48] = 100.0
+        detector = CFARDetector(
+            guard_cells=1,
+            reference_cells=3,
+            pfa=1e-3,
+            cfar_type=CFARType.CA,
+        )
+
+        detections, thresholds = detector.detect_2d(power, db_input=False)
+
+        assert detections[32, 48]
+        assert thresholds[32, 48] > 0.0
+        assert not np.any(thresholds[:4])
+
+    def test_cfar_loss_is_positive_and_relative_to_known_noise_threshold(self):
+        loss_db = CFARDetector.calculate_cfar_loss(32, 1e-6)
+        assert loss_db == pytest.approx(0.94, abs=0.05)
+
+    def test_invalid_cfar_configuration_and_input_are_rejected(self):
+        with pytest.raises(ValueError, match="pfa"):
+            CFARDetector(pfa=1.0)
+        detector = CFARDetector()
+        with pytest.raises(ValueError, match="non-negative"):
+            detector.detect(np.array([1.0, -1.0, 2.0]))
 
 
 # =============================================================================

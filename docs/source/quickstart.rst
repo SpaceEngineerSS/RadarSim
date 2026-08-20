@@ -1,39 +1,31 @@
-Quick Start
+Quick start
 ===========
 
-Launching the GUI
------------------
+Desktop application
+-------------------
 
-.. code-block:: bash
+.. code-block:: console
 
-   python run_gui.py
+   radarsim
 
-This opens the professional radar operator console with:
+Load a YAML or JSON file from ``scenarios/``, inspect the radar and
+environment fields, and start the simulation. PPI, RHI, A-scope,
+range-Doppler, tracking, recording, and imaging views consume the same model
+state.
 
-* **PPI Scope**: Plan Position Indicator with rotating sweep
-* **A-Scope**: Amplitude vs Range display
-* **Range-Doppler Map**: 2D FFT visualization
+Headless simulation
+-------------------
 
-Controls
---------
+.. code-block:: python
 
-============== =====================================
-Control        Description
-============== =====================================
-Frequency      Changes ITU-R atmospheric loss
-Power          Adjusts transmitted power
-Antenna RPM    Changes PPI sweep speed
-ECM Toggle     Activates jamming (noise strobes)
-============== =====================================
+   from src.io.scenario_loader import ScenarioLoader
 
-Loading Scenarios
------------------
+   loader = ScenarioLoader("scenarios/basic_tracking.json")
+   engine = loader.create_simulation_engine()
 
-Use **File > Load Scenario** to load YAML scenario files from the ``scenarios/`` folder.
+   for _ in range(100):
+       detections = engine.step()
 
-Example: ``scenarios/f16_vs_sa6.yaml``
-
-Flight Recording
-----------------
-
-Click **STOP** to save the session to HDF5 format in ``output/session_*.h5``.
+Use a fixed NumPy random seed and preserve the scenario file when results
+must be reproduced. Positive radial velocity and Doppler mean motion away
+from the radar.

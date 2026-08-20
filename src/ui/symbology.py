@@ -77,7 +77,7 @@ class TargetSymbol:
     classification: str = ""
     is_selected: bool = False
     snr_db: float = 20.0
-    is_jammed: bool = False  # Phase 28: EA status
+    is_jammed: bool = False
 
 
 # =============================================================================
@@ -109,7 +109,7 @@ class SymbolColors:
     # Velocity leader
     VELOCITY_LEADER = QColor(255, 255, 255, 180)
 
-    # Phase 28: Jammed status
+    # Jammed status
     JAMMED = QColor(255, 0, 255)  # Magenta
     JAMMED_GLOW = QColor(255, 0, 255, 80)  # Pulsing glow
 
@@ -322,7 +322,7 @@ class SymbolGenerator:
             painter.setPen(QColor(180, 180, 180, 200))
             painter.drawText(QPointF(self.SYMBOL_SIZE + 4, 4), symbol.classification)
 
-        # ═══ PHASE 28: Jammed status indicator ═══
+        # Jammed-status indicator
         if symbol.is_jammed:
             # Pulsing magenta border
             import time

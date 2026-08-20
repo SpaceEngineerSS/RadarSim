@@ -1,211 +1,60 @@
-# Developed by Mehmet Gümüş (@SpaceEngineerSS) - RadarSim v2.x
-"""
-CFAR (Constant False Alarm Rate) Detectors
+"""Statistically calibrated CFAR detectors for square-law radar data."""
 
-Implements various CFAR algorithms for radar target detection
-in the presence of clutter and interference.
-
-References:
-    - Rohling, "Radar CFAR Thresholding in Clutter and Multiple Target Situations",
-      IEEE Trans. AES, Vol. 19, No. 4, July 1983
-    - Skolnik, "Radar Handbook", 3rd Ed., Chapter 6
-    - Richards, "Fundamentals of Radar Signal Processing", 2nd Ed., Chapter 7
-"""
+from __future__ import annotations
 
 from enum import Enum
-from typing import Tuple
+from functools import lru_cache
 
-import numba
 import numpy as np
+from scipy.integrate import quad
+from scipy.optimize import brentq
+from scipy.stats import gamma
 
 
 class CFARType(Enum):
-    """CFAR detector variants."""
-
-    CA = "cell_averaging"  # Cell-Averaging CFAR
-    GO = "greatest_of"  # Greatest-Of CFAR
-    SO = "smallest_of"  # Smallest-Of CFAR
-    OS = "ordered_statistic"  # Order-Statistic CFAR
-    CAGO = "cell_averaging_go"  # CA-GO hybrid
+    CA = "cell_averaging"
+    GO = "greatest_of"
+    SO = "smallest_of"
+    OS = "ordered_statistic"
+    CAGO = "cell_averaging_go"
 
 
-@numba.jit(nopython=True, cache=True)
-def _ca_cfar_1d_jit(
-    signal: np.ndarray, guard_cells: int, reference_cells: int, pfa: float
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    JIT-compiled 1D Cell-Averaging CFAR.
+@lru_cache(maxsize=128)
+def _half_window_multiplier(reference_cells: int, pfa: float, greatest: bool) -> float:
+    def achieved_pfa(multiplier: float) -> float:
+        def integrand(value: float) -> float:
+            selection_probability = (
+                gamma.cdf(value, reference_cells)
+                if greatest
+                else gamma.sf(value, reference_cells)
+            )
+            return (
+                2.0
+                * np.exp(-multiplier * value / reference_cells)
+                * gamma.pdf(value, reference_cells)
+                * selection_probability
+            )
 
-    Threshold = α × (1/N) × Σ(reference cell values)
-    where α is determined by desired Pfa
+        return quad(integrand, 0.0, np.inf, epsabs=1e-12, limit=250)[0]
 
-    Args:
-        signal: Input signal power (linear)
-        guard_cells: Number of guard cells on each side
-        reference_cells: Number of reference cells on each side
-        pfa: Probability of false alarm
-
-    Returns:
-        Tuple of (detection mask, threshold values)
-
-    Reference: Rohling, 1983, Eq. 2
-    """
-    n = len(signal)
-    detections = np.zeros(n, dtype=np.bool_)
-    thresholds = np.zeros(n)
-
-    # Total reference window size
-    total_ref = 2 * reference_cells
-
-    # CFAR threshold multiplier for exponential noise
-    # Pfa = (1 + α/N)^(-N) → α = N × (Pfa^(-1/N) - 1)
-    alpha = total_ref * (pfa ** (-1.0 / total_ref) - 1)
-
-    for i in range(guard_cells + reference_cells, n - guard_cells - reference_cells):
-        # Reference window indices
-        # Leading cells: i - guard - ref to i - guard - 1
-        # Lagging cells: i + guard + 1 to i + guard + ref
-
-        sum_ref = 0.0
-        count = 0
-
-        # Leading reference cells
-        for j in range(i - guard_cells - reference_cells, i - guard_cells):
-            sum_ref += signal[j]
-            count += 1
-
-        # Lagging reference cells
-        for j in range(i + guard_cells + 1, i + guard_cells + reference_cells + 1):
-            sum_ref += signal[j]
-            count += 1
-
-        # Average and threshold
-        if count > 0:
-            noise_estimate = sum_ref / count
-            threshold = alpha * noise_estimate
-            thresholds[i] = threshold
-
-            if signal[i] > threshold:
-                detections[i] = True
-
-    return detections, thresholds
+    return float(brentq(lambda value: achieved_pfa(value) - pfa, 0.0, 1e5))
 
 
-@numba.jit(nopython=True, cache=True)
-def _go_cfar_1d_jit(
-    signal: np.ndarray, guard_cells: int, reference_cells: int, pfa: float
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    JIT-compiled 1D Greatest-Of CFAR.
+@lru_cache(maxsize=128)
+def _os_multiplier(total_reference_cells: int, rank: int, pfa: float) -> float:
+    def achieved_pfa(multiplier: float) -> float:
+        terms = [
+            (total_reference_cells - index)
+            / (total_reference_cells - index + multiplier)
+            for index in range(rank)
+        ]
+        return float(np.prod(terms))
 
-    Uses maximum of leading/lagging estimates.
-    Better at clutter edges but higher loss.
-
-    Args:
-        signal: Input signal power (linear)
-        guard_cells: Number of guard cells on each side
-        reference_cells: Number of reference cells on each side
-        pfa: Probability of false alarm
-
-    Returns:
-        Tuple of (detection mask, threshold values)
-
-    Reference: Rohling, 1983, Eq. 8
-    """
-    n = len(signal)
-    detections = np.zeros(n, dtype=np.bool_)
-    thresholds = np.zeros(n)
-
-    # CFAR multiplier (for half-window)
-    alpha = reference_cells * (pfa ** (-1.0 / reference_cells) - 1)
-
-    for i in range(guard_cells + reference_cells, n - guard_cells - reference_cells):
-        # Leading reference cells
-        sum_leading = 0.0
-        for j in range(i - guard_cells - reference_cells, i - guard_cells):
-            sum_leading += signal[j]
-        leading_est = sum_leading / reference_cells
-
-        # Lagging reference cells
-        sum_lagging = 0.0
-        for j in range(i + guard_cells + 1, i + guard_cells + reference_cells + 1):
-            sum_lagging += signal[j]
-        lagging_est = sum_lagging / reference_cells
-
-        # Greatest-Of selection
-        noise_estimate = max(leading_est, lagging_est)
-        threshold = alpha * noise_estimate
-        thresholds[i] = threshold
-
-        if signal[i] > threshold:
-            detections[i] = True
-
-    return detections, thresholds
-
-
-@numba.jit(nopython=True, cache=True)
-def _so_cfar_1d_jit(
-    signal: np.ndarray, guard_cells: int, reference_cells: int, pfa: float
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    JIT-compiled 1D Smallest-Of CFAR.
-
-    Uses minimum of leading/lagging estimates.
-    Better for multiple closely-spaced targets.
-
-    Args:
-        signal: Input signal power (linear)
-        guard_cells: Number of guard cells on each side
-        reference_cells: Number of reference cells on each side
-        pfa: Probability of false alarm
-
-    Returns:
-        Tuple of (detection mask, threshold values)
-
-    Reference: Rohling, 1983, Eq. 10
-    """
-    n = len(signal)
-    detections = np.zeros(n, dtype=np.bool_)
-    thresholds = np.zeros(n)
-
-    # CFAR multiplier
-    alpha = reference_cells * (pfa ** (-1.0 / reference_cells) - 1)
-
-    for i in range(guard_cells + reference_cells, n - guard_cells - reference_cells):
-        # Leading reference cells
-        sum_leading = 0.0
-        for j in range(i - guard_cells - reference_cells, i - guard_cells):
-            sum_leading += signal[j]
-        leading_est = sum_leading / reference_cells
-
-        # Lagging reference cells
-        sum_lagging = 0.0
-        for j in range(i + guard_cells + 1, i + guard_cells + reference_cells + 1):
-            sum_lagging += signal[j]
-        lagging_est = sum_lagging / reference_cells
-
-        # Smallest-Of selection
-        noise_estimate = min(leading_est, lagging_est)
-        threshold = alpha * noise_estimate
-        thresholds[i] = threshold
-
-        if signal[i] > threshold:
-            detections[i] = True
-
-    return detections, thresholds
+    return float(brentq(lambda value: achieved_pfa(value) - pfa, 0.0, 1e6))
 
 
 class CFARDetector:
-    """
-    Constant False Alarm Rate (CFAR) Detector
-
-    Implements CA-CFAR, GO-CFAR, and SO-CFAR variants for
-    adaptive threshold detection in radar systems.
-
-    References:
-        - Rohling, IEEE Trans. AES, 1983
-        - Skolnik, "Radar Handbook", Ch. 6
-    """
+    """One- and two-dimensional CFAR for exponential power samples."""
 
     def __init__(
         self,
@@ -213,128 +62,160 @@ class CFARDetector:
         reference_cells: int = 8,
         pfa: float = 1e-6,
         cfar_type: CFARType = CFARType.CA,
-    ):
-        """
-        Initialize CFAR detector.
+        os_rank: int | None = None,
+    ) -> None:
+        if not isinstance(guard_cells, int) or guard_cells < 0:
+            raise ValueError("guard_cells must be a non-negative integer")
+        if not isinstance(reference_cells, int) or reference_cells < 1:
+            raise ValueError("reference_cells must be a positive integer")
+        if not 0.0 < pfa < 1.0 or not np.isfinite(pfa):
+            raise ValueError("pfa must be finite and strictly between zero and one")
+        if not isinstance(cfar_type, CFARType):
+            raise ValueError("cfar_type must be a CFARType")
 
-        Args:
-            guard_cells: Guard cells on each side of CUT
-            reference_cells: Reference/training cells on each side
-            pfa: Probability of false alarm
-            cfar_type: CFAR algorithm variant
-        """
+        total_reference_cells = 2 * reference_cells
+        if os_rank is None:
+            os_rank = int(np.ceil(0.75 * total_reference_cells))
+        if not 1 <= os_rank <= total_reference_cells:
+            raise ValueError("os_rank must select one of the reference cells")
+
         self.guard_cells = guard_cells
         self.reference_cells = reference_cells
-        self.pfa = pfa
+        self.pfa = float(pfa)
         self.cfar_type = cfar_type
+        self.os_rank = int(os_rank)
+
+    @staticmethod
+    def ca_multiplier(total_reference_cells: int, pfa: float) -> float:
+        if total_reference_cells < 1 or not 0.0 < pfa < 1.0:
+            raise ValueError("invalid CFAR cell count or probability")
+        return total_reference_cells * (
+            pfa ** (-1.0 / total_reference_cells) - 1.0
+        )
+
+    @property
+    def threshold_multiplier(self) -> float:
+        total = 2 * self.reference_cells
+        if self.cfar_type == CFARType.CA:
+            return self.ca_multiplier(total, self.pfa)
+        if self.cfar_type in {CFARType.GO, CFARType.CAGO}:
+            return _half_window_multiplier(
+                self.reference_cells, self.pfa, greatest=True
+            )
+        if self.cfar_type == CFARType.SO:
+            return _half_window_multiplier(
+                self.reference_cells, self.pfa, greatest=False
+            )
+        return _os_multiplier(total, self.os_rank, self.pfa)
 
     def detect(
         self, signal: np.ndarray, db_input: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Apply CFAR detection to signal.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        power = self._as_power(signal, db_input)
+        detections = np.zeros(power.size, dtype=bool)
+        thresholds = np.zeros(power.size, dtype=float)
+        margin = self.guard_cells + self.reference_cells
+        if power.size <= 2 * margin:
+            return detections, thresholds
 
-        Args:
-            signal: Input signal (power)
-            db_input: True if signal is in dB (will convert to linear)
-
-        Returns:
-            Tuple of (detection_mask, threshold_array)
-        """
-        # Convert to linear if needed
-        if db_input:
-            signal_linear = 10 ** (signal / 10)
+        cut_indices = np.arange(margin, power.size - margin)
+        if self.cfar_type == CFARType.OS:
+            noise_estimate = self._ordered_statistics(power)
         else:
-            signal_linear = signal
+            cumulative = np.concatenate(([0.0], np.cumsum(power)))
+            left = cumulative[cut_indices - self.guard_cells] - cumulative[
+                cut_indices - margin
+            ]
+            right = cumulative[cut_indices + margin + 1] - cumulative[
+                cut_indices + self.guard_cells + 1
+            ]
+            if self.cfar_type == CFARType.CA:
+                noise_estimate = (left + right) / (2 * self.reference_cells)
+            elif self.cfar_type in {CFARType.GO, CFARType.CAGO}:
+                noise_estimate = np.maximum(left, right) / self.reference_cells
+            else:
+                noise_estimate = np.minimum(left, right) / self.reference_cells
 
-        # Ensure positive values
-        signal_linear = np.maximum(signal_linear, 1e-30)
-
-        # Select CFAR algorithm
-        if self.cfar_type == CFARType.CA:
-            detections, thresholds = _ca_cfar_1d_jit(
-                signal_linear, self.guard_cells, self.reference_cells, self.pfa
-            )
-        elif self.cfar_type == CFARType.GO:
-            detections, thresholds = _go_cfar_1d_jit(
-                signal_linear, self.guard_cells, self.reference_cells, self.pfa
-            )
-        elif self.cfar_type == CFARType.SO:
-            detections, thresholds = _so_cfar_1d_jit(
-                signal_linear, self.guard_cells, self.reference_cells, self.pfa
-            )
-        else:
-            # Default to CA
-            detections, thresholds = _ca_cfar_1d_jit(
-                signal_linear, self.guard_cells, self.reference_cells, self.pfa
-            )
-
+        valid_thresholds = self.threshold_multiplier * noise_estimate
+        thresholds[cut_indices] = valid_thresholds
+        detections[cut_indices] = power[cut_indices] > valid_thresholds
         return detections, thresholds
+
+    def _ordered_statistics(self, power: np.ndarray) -> np.ndarray:
+        window_length = 2 * (self.reference_cells + self.guard_cells) + 1
+        windows_view = np.lib.stride_tricks.sliding_window_view(power, window_length)
+        left = windows_view[:, : self.reference_cells]
+        right = windows_view[:, -self.reference_cells :]
+        reference = np.concatenate((left, right), axis=1)
+        return np.partition(reference, self.os_rank - 1, axis=1)[:, self.os_rank - 1]
+
+    @staticmethod
+    def _as_power(signal: np.ndarray, db_input: bool) -> np.ndarray:
+        signal = np.asarray(signal, dtype=float)
+        if signal.ndim != 1 or not np.all(np.isfinite(signal)):
+            raise ValueError("signal must be a finite one-dimensional array")
+        power = 10.0 ** (signal / 10.0) if db_input else signal
+        if np.any(power < 0.0):
+            raise ValueError("linear power samples must be non-negative")
+        return power
 
     def detect_2d(
         self, rd_map: np.ndarray, db_input: bool = True
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Apply 2D CFAR detection to Range-Doppler map.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Apply true rectangular 2-D CA-CFAR, excluding a guard rectangle."""
+        if self.cfar_type != CFARType.CA:
+            raise NotImplementedError("calibrated 2-D processing currently supports CA-CFAR")
+        data = np.asarray(rd_map, dtype=float)
+        if data.ndim != 2 or not np.all(np.isfinite(data)):
+            raise ValueError("rd_map must be a finite two-dimensional array")
+        power = 10.0 ** (data / 10.0) if db_input else data
+        if np.any(power < 0.0):
+            raise ValueError("linear power samples must be non-negative")
 
-        Uses separable 1D CFAR (faster than true 2D).
+        detections = np.zeros(power.shape, dtype=bool)
+        thresholds = np.zeros(power.shape, dtype=float)
+        guard = self.guard_cells
+        reference = self.reference_cells
+        margin = guard + reference
+        outer_width = 2 * margin + 1
+        guard_width = 2 * guard + 1
+        training_count = outer_width**2 - guard_width**2
+        if min(power.shape) <= 2 * margin:
+            return detections, thresholds
 
-        Args:
-            rd_map: 2D Range-Doppler map [doppler x range]
-            db_input: True if input is in dB
+        integral = np.pad(power, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
 
-        Returns:
-            Tuple of (2D detection mask, 2D threshold array)
-        """
-        n_doppler, n_range = rd_map.shape
+        def rectangle_sum(r0: int, c0: int, r1: int, c1: int) -> float:
+            return float(
+                integral[r1, c1]
+                - integral[r0, c1]
+                - integral[r1, c0]
+                + integral[r0, c0]
+            )
 
-        # Convert to linear
-        if db_input:
-            rd_linear = 10 ** (rd_map / 10)
-        else:
-            rd_linear = rd_map
-
-        # Apply CFAR along range dimension first
-        range_detections = np.zeros_like(rd_map, dtype=bool)
-        range_thresholds = np.zeros_like(rd_map)
-
-        for d in range(n_doppler):
-            det, thresh = self.detect(rd_linear[d, :], db_input=False)
-            range_detections[d, :] = det
-            range_thresholds[d, :] = thresh
-
-        # Apply CFAR along Doppler dimension
-        doppler_detections = np.zeros_like(rd_map, dtype=bool)
-
-        for r in range(n_range):
-            det, _ = self.detect(rd_linear[:, r], db_input=False)
-            doppler_detections[:, r] = det
-
-        # Combined detection: require detection in both dimensions
-        combined_detections = range_detections & doppler_detections
-
-        return combined_detections, range_thresholds
+        multiplier = self.ca_multiplier(training_count, self.pfa)
+        for row in range(margin, power.shape[0] - margin):
+            for column in range(margin, power.shape[1] - margin):
+                outer = rectangle_sum(
+                    row - margin,
+                    column - margin,
+                    row + margin + 1,
+                    column + margin + 1,
+                )
+                inner = rectangle_sum(
+                    row - guard,
+                    column - guard,
+                    row + guard + 1,
+                    column + guard + 1,
+                )
+                threshold = multiplier * (outer - inner) / training_count
+                thresholds[row, column] = threshold
+                detections[row, column] = power[row, column] > threshold
+        return detections, thresholds
 
     @staticmethod
     def calculate_cfar_loss(n_ref_cells: int, pfa: float) -> float:
-        """
-        Calculate CFAR detection loss compared to fixed threshold.
-
-        Loss = 10 * log10(α/N) where α is the CFAR multiplier
-
-        Args:
-            n_ref_cells: Total number of reference cells
-            pfa: Probability of false alarm
-
-        Returns:
-            CFAR loss in dB
-
-        Reference: Skolnik, Eq. 6.8
-        """
-        alpha = n_ref_cells * (pfa ** (-1.0 / n_ref_cells) - 1)
-
-        # Loss relative to ideal Neyman-Pearson detector
-        # For exponential noise: ~1 dB for N=16, Pfa=1e-6
-        loss_db = 10 * np.log10(alpha / n_ref_cells)
-
-        return loss_db
+        """Return CA-CFAR threshold loss relative to known mean noise."""
+        alpha = CFARDetector.ca_multiplier(n_ref_cells, pfa)
+        fixed_threshold = -np.log(pfa)
+        return float(10.0 * np.log10(alpha / fixed_threshold))

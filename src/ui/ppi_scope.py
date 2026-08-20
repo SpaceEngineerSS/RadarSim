@@ -25,14 +25,6 @@ from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-# MIL-STD-2525 Symbology
-try:
-    from .symbology import Affiliation, SymbolColors, get_affiliation_from_name
-
-    SYMBOLOGY_AVAILABLE = True
-except ImportError:
-    SYMBOLOGY_AVAILABLE = False
-
 
 @dataclass
 class TargetBlip:

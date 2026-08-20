@@ -3,7 +3,7 @@ Range-Doppler Map Widget
 
 High-fidelity 2D FFT output display showing targets in range-velocity space.
 
-Phase 26 Upgrade: Now supports DUAL modes:
+Supports two display modes:
     - [PULSE-DOPPLER]: Displays actual processed R-D map from coherent
       pulse train processing (CPI → Matched Filter → MTI → Doppler FFT)
     - [SYNTHETIC]: Legacy mode with Gaussian blob visualization
@@ -19,9 +19,8 @@ Features:
 Reference: Richards, "Fundamentals of Radar Signal Processing", 2nd Ed., Ch. 4
 Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 
-Migration Note: Ported from gui/widgets/range_doppler.py with
-    PySide6 modernization, SimulationState integration, and Phase 26
-    pulse-Doppler signal-level processing support.
+The pulse-Doppler mode consumes signal-level processing output from the
+simulation engine.
 """
 
 import time
@@ -101,7 +100,7 @@ class RangeDopplerScope(QWidget):
         self._min_update_interval = 1.0 / 30.0  # 30 FPS max
         self._frame_count = 0
 
-        # ═══ Phase 26: Processing mode tracking ═══
+        # Processing-mode state
         self._pd_mode = False
         self._blind_speed_lines = []
         self._mti_notch_fill = None
@@ -323,7 +322,7 @@ class RangeDopplerScope(QWidget):
         self._last_update_time = current_time
         self._frame_count += 1
 
-        # ═══ Phase 26: Route to correct rendering mode ═══
+        # Route to the active rendering mode.
         pd_enabled = state.get("pulse_doppler_enabled", False)
         rd_map_data = state.get("rd_map")
 

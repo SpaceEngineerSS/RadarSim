@@ -77,7 +77,10 @@ class GeoMapVisualizer:
         ax.scatter(
             xs,
             ys,
-            c=["g" if "Radar" in l else "r" if "Hedef" in l else "c" for l in labels],
+            c=[
+                "g" if "Radar" in label else "r" if "Hedef" in label else "c"
+                for label in labels
+            ],
             s=80,
         )
         for x, y, label in zip(xs, ys, labels):

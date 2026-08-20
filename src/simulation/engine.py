@@ -18,9 +18,19 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from src.physics.atmospheric import ITU_R_P676
-from src.physics.ecm import ECMSimulator
+from src.physics.ecm import (
+    DRFMConfig,
+    DRFMJammer,
+    DRFMState,
+    ECMSimulator,
+    apply_receiver_hard_limiter,
+)
 from src.physics.metrics import calculate_pd_swerling
-from src.physics.radar_equation import RadarParameters, calculate_snr
+from src.physics.radar_equation import (
+    RadarParameters,
+    calculate_received_power,
+    calculate_snr,
+)
 from src.physics.rain import ITU_R_P838
 from src.physics.rcs import SwerlingModel
 
@@ -44,7 +54,7 @@ except ImportError:
     TRACKING_AVAILABLE = False
     TrackManager = None
 
-# Clutter model (Phase 19)
+# Clutter model
 try:
     from src.physics.clutter import ClutterModel
 
@@ -53,16 +63,7 @@ except ImportError:
     CLUTTER_AVAILABLE = False
     ClutterModel = None
 
-# AI Inference Engine (Phase 25)
-try:
-    from src.ml.inference_engine import InferenceEngine
-
-    INFERENCE_AVAILABLE = True
-except ImportError:
-    INFERENCE_AVAILABLE = False
-    InferenceEngine = None
-
-# Pulse-Doppler Processing (Phase 26)
+# Pulse-Doppler processing
 try:
     from src.signal.pulse_doppler import PulseDopplerProcessor, RangeDopplerMap
 
@@ -101,9 +102,6 @@ class DetectionResult:
     is_detected: bool
     pd: float  # Probability of detection
 
-    # AI Classification (Phase 25)
-    predicted_class: str = "Unknown"
-    confidence: float = 0.0
     atmospheric_loss_db: float = 0.0
     rain_attenuation_db: float = 0.0
     surface_clutter_loss_db: float = 0.0
@@ -114,6 +112,10 @@ class DetectionResult:
     rain_clutter_loss_db: float = 0.0
     jammer_jsr_db: Optional[float] = None
     jammer_loss_db: float = 0.0
+    receiver_input_power_dbm: Optional[float] = None
+    receiver_headroom_db: Optional[float] = None
+    receiver_clipping_loss_db: float = 0.0
+    receiver_overloaded: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -128,8 +130,6 @@ class DetectionResult:
             "snr_db": self.snr_db,
             "is_detected": self.is_detected,
             "pd": self.pd,
-            "predicted_class": self.predicted_class,
-            "confidence": self.confidence,
             "atmospheric_loss_db": self.atmospheric_loss_db,
             "rain_attenuation_db": self.rain_attenuation_db,
             "surface_clutter_loss_db": self.surface_clutter_loss_db,
@@ -140,6 +140,10 @@ class DetectionResult:
             "rain_clutter_loss_db": self.rain_clutter_loss_db,
             "jammer_jsr_db": self.jammer_jsr_db,
             "jammer_loss_db": self.jammer_loss_db,
+            "receiver_input_power_dbm": self.receiver_input_power_dbm,
+            "receiver_headroom_db": self.receiver_headroom_db,
+            "receiver_clipping_loss_db": self.receiver_clipping_loss_db,
+            "receiver_overloaded": self.receiver_overloaded,
         }
 
 
@@ -248,6 +252,7 @@ class SimulationEngine:
         terrain_type: str = "rural",
         sea_state: int = 3,
         rain_rate_mm_hr: float = 0.0,
+        receiver_full_scale_dbm: float = -20.0,
         ground_model: str = "gamma",
         land_gamma_db: Optional[float] = None,
         ground_relative_permittivity: complex = complex(8.0, -0.8),
@@ -274,6 +279,7 @@ class SimulationEngine:
             terrain_type: Surface classification used by the clutter model
             sea_state: Douglas sea-state index from 0 through 6
             rain_rate_mm_hr: Rain rate [mm/h]
+            receiver_full_scale_dbm: Complex-envelope hard-limiter threshold [dBm]
             ground_model: Land reflectivity model, either gamma or oh1992
             land_gamma_db: Measured or calibrated gamma value for the gamma model [dB]
             ground_relative_permittivity: Passive complex soil permittivity eps'-j eps''
@@ -352,6 +358,7 @@ class SimulationEngine:
         self.ecm_type = "noise"  # 'noise', 'chaff', 'drfm', 'decoy'
         self.ecm_activation_time = 0.0  # When ECM was activated (for RGPO drift)
         self._ecm_simulator = ECMSimulator(radar_wavelength=radar.wavelength)
+        self._drfm_jammers: Dict[int, DRFMJammer] = {}
 
         # ═══ TRACK-WHILE-SCAN (TWS) ═══
         if TRACKING_AVAILABLE:
@@ -372,14 +379,18 @@ class SimulationEngine:
         self.lpi_enabled = False
         self.lpi_technique = "FHSS"  # 'FHSS', 'DSSS', 'Costas'
         self.fusion_enabled = False
-        self.fusion_method = "kalman"  # 'kalman', 'particle', 'bayesian'
+        self.fusion_method = "covariance_intersection"
 
-        # ═══ PHASE 19: CLUTTER, MTI & ECCM STATE ═══
+        # Clutter, MTI, and ECCM state
         # Clutter: Adds environmental noise (ground/sea clutter)
         self.clutter_enabled = enable_clutter
         self.terrain_type = terrain_type
         self.sea_state = sea_state
         self.rain_rate_mm_hr = rain_rate_mm_hr
+        self.receiver_full_scale_dbm = receiver_full_scale_dbm
+        self.receiver_full_scale_power_watts = 1e-3 * 10.0 ** (
+            receiver_full_scale_dbm / 10.0
+        )
         self.ground_model = ground_model
         self.land_gamma_db = land_gamma_db
         self.ground_relative_permittivity = ground_relative_permittivity
@@ -401,24 +412,16 @@ class SimulationEngine:
         self.frequency_agility_enabled = False
         self.base_frequency_hz = radar.frequency_hz  # Store original frequency
 
-        # ═══ PHASE 20: MONOPULSE ANGLE TRACKING ═══
+        # Monopulse angle tracking
         self.monopulse_enabled = False
 
-        # ═══ PHASE 25: AI INFERENCE ENGINE ═══
-        if INFERENCE_AVAILABLE:
-            self._inference_engine = InferenceEngine()
-            self.enable_auto_classification = True
-        else:
-            self._inference_engine = None
-            self.enable_auto_classification = False
-
-        # Frame counter for throttled operations (AI inference every 10 frames)
+        # Frame counter for throttled signal processing and display updates
         self._frame_count = 0
 
         # Store pulse width for rain volume clutter calculation
         self._pulse_width_s = radar.pulse_width_s
 
-        # ═══ PHASE 26: PULSE-DOPPLER PROCESSING ═══
+        # Pulse-Doppler processing
         self.pulse_doppler_enabled = False
         self._pd_processor: Optional["PulseDopplerProcessor"] = None
         self._rd_map: Optional["RangeDopplerMap"] = None
@@ -439,7 +442,7 @@ class SimulationEngine:
         mti_order: int = 0,
     ) -> None:
         """
-        Enable/disable signal-level pulse-Doppler processing (Phase 26).
+        Enable or disable signal-level pulse-Doppler processing.
 
         When enabled, generates a true Range-Doppler map from coherent
         pulse train processing instead of parametric detection only.
@@ -499,7 +502,7 @@ class SimulationEngine:
                 target.position, target.velocity
             )
             r_m = geom["range_m"]
-            if r_m < 100.0 or r_m > self._pd_processor.max_unambiguous_range_m:
+            if r_m < 100.0 or r_m > self._pd_processor.max_instrumented_range_m:
                 continue
 
             # Check if target is within ±beamwidth of current antenna pointing
@@ -514,7 +517,7 @@ class SimulationEngine:
                 10 ** (self.state.snr_values.get(target.target_id, 0.0) / 10.0),
                 1e-6,
             )
-            amplitude = np.sqrt(snr_lin)
+            amplitude = self._pd_processor.amplitude_for_output_snr(snr_lin)
 
             ranges_m.append(r_m)
             velocities_mps.append(geom["radial_velocity_mps"])
@@ -527,7 +530,7 @@ class SimulationEngine:
             if velocities_mps
             else np.array([]),
             target_amplitudes=np.array(amplitudes) if amplitudes else np.array([]),
-            noise_power=1e-12,
+            noise_power=1.0,
         )
 
     def set_ecm_mode(self, active: bool, ecm_type: str = "noise") -> None:
@@ -538,17 +541,45 @@ class SimulationEngine:
             active: Whether ECM is active
             ecm_type: Type of ECM ('noise', 'chaff', 'drfm', 'decoy')
         """
-        # Track activation time for RGPO drift calculation
+        normalized_type = ecm_type.lower().replace(" ", "_")
+        previous_type = self.ecm_type
         if active and not self.ecm_active:
             self.ecm_activation_time = self.current_time
 
         self.ecm_active = active
-        self.ecm_type = ecm_type.lower().replace(" ", "_")
+        self.ecm_type = normalized_type
+
+        if previous_type != normalized_type:
+            self.false_targets = []
+            for jammer in self._drfm_jammers.values():
+                jammer.deactivate()
+
+        if active and normalized_type in {"drfm", "drfm_repeater"}:
+            for target in self.targets:
+                if not target.jammer_active:
+                    continue
+                jammer = DRFMJammer(
+                    DRFMConfig(
+                        power_watts=max(target.jammer_power_watts, 1e-12),
+                        gain_over_skin_db=target.drfm_gain_over_skin_db,
+                        pull_rate_mps=target.drfm_pull_rate_mps,
+                        max_pull_m=target.drfm_max_pull_m,
+                        capture_dwell_s=target.drfm_capture_dwell_s,
+                        mode=target.drfm_mode,
+                        vgpo_accel_hz_per_s=target.drfm_vgpo_rate_hz_per_s,
+                        max_doppler_pull_hz=target.drfm_max_doppler_pull_hz,
+                        inherent_delay_s=target.drfm_inherent_delay_s,
+                    )
+                )
+                jammer.activate()
+                self._drfm_jammers[target.target_id] = jammer
 
         # Clear false targets when ECM is deactivated
         if not active:
             self.false_targets = []
             self.ecm_activation_time = 0.0
+            for jammer in self._drfm_jammers.values():
+                jammer.deactivate()
 
     def generate_ecm_false_targets(self, parent_target: Target) -> List[FalseTarget]:
         """
@@ -619,44 +650,41 @@ class SimulationEngine:
 
         # ═══ CASE 4: DRFM REPEATER with RGPO ═══
         elif ecm_type == "drfm" or ecm_type == "drfm_repeater":
-            # DRFM: Digital RF Memory creates 1-2 ghosts with RGPO drift
-            # Physics: Ghost starts at aircraft position, slowly drifts BEHIND
-            # RGPO (Range Gate Pull-Off): Ghost range increases by ~50m/s
+            jammer = self._drfm_jammers.get(parent_target.target_id)
+            if jammer is None or not jammer.is_active:
+                return false_targets
 
-            # Calculate time since ECM activation for RGPO drift
-            time_active = self.current_time - self.ecm_activation_time
-            rgpo_drift_rate = 50.0  # m/s drift rate (ghost moves away)
-            rgpo_drift = min(time_active * rgpo_drift_rate, 2000.0)  # Cap at 2km
+            line_of_sight = parent_target.position - self.radar.position
+            target_range = np.linalg.norm(line_of_sight)
+            if target_range <= 0.0:
+                return false_targets
+            radial_unit = line_of_sight / target_range
+            range_offset = jammer.false_range_offset_m
+            ghost_position = parent_target.position + radial_unit * range_offset
+            ghost_velocity = parent_target.velocity.copy()
+            if jammer.state == DRFMState.PULL:
+                if jammer.config.mode == "rgpo":
+                    ghost_velocity = (
+                        ghost_velocity + radial_unit * jammer.config.pull_rate_mps
+                    )
+                else:
+                    ghost_velocity = ghost_velocity + radial_unit * (
+                        jammer.pull_offset_hz * self.radar.wavelength / 2.0
+                    )
 
-            n_ghosts = 1 if time_active < 3.0 else 2  # Second ghost after 3s
-
-            for i in range(n_ghosts):
-                # Base delay + RGPO drift (ghost drifts behind target over time)
-                base_delay = 80 + i * 100  # 80m, 180m base offsets
-                total_delay = base_delay + rgpo_drift
-
-                # Ghost position: Same direction but increasing range (RGPO)
-                direction = parent_target.position / (
-                    np.linalg.norm(parent_target.position) + 1e-6
-                )
-                ghost_pos = parent_target.position + direction * total_delay
-
-                # Ghost velocity: Slightly slower than parent (appears to fall back)
-                # This creates visible separation on Doppler display
-                vel_reduction = direction * 20.0  # 20 m/s slower radially
-
-                false_target = FalseTarget(
-                    position=ghost_pos,
-                    velocity=parent_target.velocity - vel_reduction,  # Slightly slower
-                    rcs_m2=parent_target.rcs_mean * np.random.uniform(0.9, 1.2),
-                    ecm_type="drfm",
-                    parent_target_id=parent_target.target_id,
-                    creation_time=self.current_time,
-                    lifetime_s=0.15,  # DRFM ghosts continuously regenerate
-                    false_id=self._next_false_id,
-                )
-                self._next_false_id += 1
-                false_targets.append(false_target)
+            false_target = FalseTarget(
+                position=ghost_position,
+                velocity=ghost_velocity,
+                rcs_m2=parent_target.rcs_mean
+                * 10.0 ** (jammer.config.gain_over_skin_db / 10.0),
+                ecm_type="drfm",
+                parent_target_id=parent_target.target_id,
+                creation_time=self.current_time,
+                lifetime_s=max(1.1, 2.0 * self.dt),
+                false_id=self._next_false_id,
+            )
+            self._next_false_id += 1
+            false_targets.append(false_target)
 
         # ═══ CASE 5: DECOY ═══
         elif ecm_type == "decoy":
@@ -764,6 +792,10 @@ class SimulationEngine:
         self.state.update_all(dt)
         self.current_time = self.state.time
 
+        if self.ecm_active and self.ecm_type in {"drfm", "drfm_repeater"}:
+            for jammer in self._drfm_jammers.values():
+                jammer.step(dt)
+
         # Increment frame counter for throttled operations
         self._frame_count += 1
 
@@ -792,6 +824,18 @@ class SimulationEngine:
                         two_way=True,
                     )
 
+            rain_loss_db = 0.0
+            if self.rain_rate_mm_hr > 0.0 and geom["range_m"] > 100.0:
+                rain_loss_db = ITU_R_P838.path_attenuation(
+                    geom["range_m"] / 1000.0,
+                    self.radar.frequency_hz / 1e9,
+                    self.rain_rate_mm_hr,
+                    elevation_angle_deg=geom["elevation_deg"],
+                    polarization_tilt_deg=self.radar.polarization_tilt_deg,
+                    two_way=True,
+                )
+            propagation_loss_db = atm_loss_db + rain_loss_db
+
             # ═══ TERRAIN MASKING CHECK (LOS) ═══
             terrain_masked = False
             if self.enable_terrain_masking and self.terrain is not None:
@@ -817,12 +861,19 @@ class SimulationEngine:
             # Calculate SNR (terrain-masked targets get SNR = -inf)
             if terrain_masked:
                 snr_db = -100.0  # Effectively invisible
+                signal_input_power_watts = None
             else:
                 snr_db = calculate_snr(
                     self._radar_params,
                     rcs,
                     geom["range_m"],
-                    atmospheric_loss_db=atm_loss_db,
+                    atmospheric_loss_db=propagation_loss_db,
+                )
+                signal_input_power_watts = calculate_received_power(
+                    self._radar_params,
+                    rcs,
+                    geom["range_m"],
+                    atmospheric_loss_db=propagation_loss_db,
                 )
 
             clutter_snr_loss_db = 0.0
@@ -952,21 +1003,6 @@ class SimulationEngine:
                 snr_db = self._ecm_simulator.calculate_sjnr_db(snr_db, jsr_db)
                 jammer_snr_loss_db = pre_jamming_snr_db - snr_db
 
-            rain_loss_db = 0.0
-            if self.rain_rate_mm_hr > 0 and geom["range_m"] > 100:
-                freq_ghz = self.radar.frequency_hz / 1e9
-                range_km = geom["range_m"] / 1000
-
-                rain_loss_db = ITU_R_P838.path_attenuation(
-                    range_km,
-                    freq_ghz,
-                    self.rain_rate_mm_hr,
-                    elevation_angle_deg=geom["elevation_deg"],
-                    polarization_tilt_deg=self.radar.polarization_tilt_deg,
-                    two_way=True,
-                )
-                snr_db -= rain_loss_db
-
             rain_clutter_loss_db = 0.0
             if self.rain_rate_mm_hr > 0 and CLUTTER_AVAILABLE and geom["range_m"] > 100:
                 try:
@@ -990,13 +1026,32 @@ class SimulationEngine:
                 except ValueError:
                     raise
 
+            receiver_input_power_dbm = None
+            receiver_headroom_db = None
+            receiver_clipping_loss_db = 0.0
+            receiver_overloaded = False
+            if signal_input_power_watts is not None:
+                interference_input_power_watts = signal_input_power_watts / (
+                    10.0 ** (snr_db / 10.0)
+                )
+                limiter = apply_receiver_hard_limiter(
+                    signal_input_power_watts,
+                    interference_input_power_watts,
+                    self.receiver_full_scale_power_watts,
+                )
+                snr_db = limiter.sinr_db
+                receiver_input_power_dbm = limiter.input_power_dbm
+                receiver_headroom_db = limiter.headroom_db
+                receiver_clipping_loss_db = limiter.clipping_loss_db
+                receiver_overloaded = limiter.overloaded
+
             # Calculate probability of detection (Swerling model)
             pd = self._calculate_pd(snr_db, target.swerling_model)
 
             # Detection decision
             is_detected = np.random.random() < pd
 
-            # ═══ PHASE 19: MTI FILTER ═══
+            # Moving-target indication filter
             # Moving Target Indication: Reject slow-moving targets (clutter)
             # Reference: Richards, "Fundamentals of Radar Signal Processing"
             if self.mti_enabled and is_detected:
@@ -1021,42 +1076,6 @@ class SimulationEngine:
                 measured_az = 0.0
                 measured_el = 0.0
 
-            # ═══ PHASE 25: AI AUTO-CLASSIFICATION ═══
-            # Automatically classify detected targets using ML inference
-            # Reference: RandomForest classifier trained on synthetic radar data
-            predicted_class = "Unknown"
-            ai_confidence = 0.0
-
-            if (
-                is_detected
-                and self.enable_auto_classification
-                and self._inference_engine is not None
-            ):
-                # Throttle inference to every 10 frames (~300ms at 30fps) to save CPU
-                if self._frame_count % 10 == 0:
-                    try:
-                        # Calculate Doppler frequency from radial velocity
-                        doppler_hz = (
-                            2
-                            * geom["radial_velocity_mps"]
-                            * self.radar.frequency_hz
-                            / 3e8
-                        )
-
-                        # Build feature vector for inference
-                        track_data = {
-                            "range_km": geom["range_m"] / 1000.0,
-                            "doppler_hz": abs(doppler_hz),
-                            "snr_db": snr_db,
-                            "rcs_est_m2": rcs,
-                        }
-
-                        predicted_class, ai_confidence = self._inference_engine.predict(
-                            track_data
-                        )
-                    except Exception:
-                        pass  # Fail silently if inference fails
-
             # Create detection result
             result = DetectionResult(
                 target_id=target.target_id,
@@ -1072,8 +1091,6 @@ class SimulationEngine:
                 snr_db=snr_db,
                 is_detected=is_detected,
                 pd=pd,
-                predicted_class=predicted_class,
-                confidence=ai_confidence,
                 atmospheric_loss_db=atm_loss_db,
                 rain_attenuation_db=rain_loss_db,
                 surface_clutter_loss_db=clutter_snr_loss_db,
@@ -1084,6 +1101,10 @@ class SimulationEngine:
                 rain_clutter_loss_db=rain_clutter_loss_db,
                 jammer_jsr_db=jsr_db,
                 jammer_loss_db=jammer_snr_loss_db,
+                receiver_input_power_dbm=receiver_input_power_dbm,
+                receiver_headroom_db=receiver_headroom_db,
+                receiver_clipping_loss_db=receiver_clipping_loss_db,
+                receiver_overloaded=receiver_overloaded,
             )
 
             results.append(result)
@@ -1114,12 +1135,12 @@ class SimulationEngine:
         active_false_targets = []
         for ft in self.false_targets:
             if not ft.is_expired(self.current_time):
-                # Update position based on velocity
-                ft.position = ft.position + ft.velocity * dt
+                if ft.creation_time < self.current_time:
+                    ft.position = ft.position + ft.velocity * dt
                 active_false_targets.append(ft)
         self.false_targets = active_false_targets
 
-        # 5. Pulse-Doppler processing (Phase 26)
+        # 5. Pulse-Doppler processing
         # Generate Range-Doppler map when enabled
         self._run_pulse_doppler()
 

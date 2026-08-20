@@ -1,112 +1,90 @@
-name: Build and Release
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build for ${{ matrix.os }}
+  source-distributions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+
+  desktop:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
-          - os: ubuntu-latest
-            artifact_name: RadarSim_Linux
-            asset_name: RadarSim_v${{ github.ref_name }}_Linux.tar.gz
           - os: windows-latest
-            artifact_name: RadarSim_Windows
-            asset_name: RadarSim_v${{ github.ref_name }}_Windows.zip
+            platform: Windows_x86_64
+            executable: build/RadarSim.exe
+          - os: ubuntu-latest
+            platform: Linux_x86_64
+            executable: build/RadarSim.bin
           - os: macos-latest
-            artifact_name: RadarSim_macOS
-            asset_name: RadarSim_v${{ github.ref_name }}_macOS.zip
-
+            platform: macOS_arm64
+            executable: build/RadarSim.bin
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[gui]"
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
+      - uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: stable
+          script-name: run_gui.py
+          mode: onefile
+          enable-plugins: pyside6
+          include-data-dir: scenarios=scenarios
+          output-file: RadarSim
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path '${{ matrix.executable }}', README.md, LICENSE -DestinationPath 'RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.zip'
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        run: tar -czf "RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.tar.gz" "${{ matrix.executable }}" README.md LICENSE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RadarSim_${{ matrix.platform }}
+          path: RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.*
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Install System Dependencies (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y patchelf ccache libgl1 libegl1 libxrandr2 libxss1 libxcursor1 libxcomposite1 libasound2t64 libxi6 libxtst6
-
-    - uses: Nuitka/Nuitka-Action@main
-      with:
-        nuitka-version: main
-        script-name: run_gui.py
-        mode: onefile
-        enable-plugins: pyside6
-        output-file: RadarSim
-
-    - name: Package Windows
-      if: matrix.os == 'windows-latest'
-      run: |
-        powershell Compress-Archive -Path build/* -DestinationPath ${{ matrix.asset_name }}
-
-    - name: Package Linux
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        tar -czvf ${{ matrix.asset_name }} -C build/ .
-
-    - name: Package macOS
-      if: matrix.os == 'macos-latest'
-      run: |
-        cd build && zip -r ../${{ matrix.asset_name }} .
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact_name }}
-        path: ${{ matrix.asset_name }}
-
-  release:
-    name: Create Release
-    needs: build
+  publish:
+    needs: [source-distributions, desktop]
     runs-on: ubuntu-latest
     steps:
-    - name: Download Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        merge-multiple: true
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          RadarSim_v*_Linux.tar.gz
-          RadarSim_v*_Windows.zip
-          RadarSim_v*_macOS.zip
-        name: RadarSim ${{ github.ref_name }}
-        draft: false
-        prerelease: false
-        body: |
-          ## 🚀 RadarSim ${{ github.ref_name }} Official Release
-
-          Automated cross-platform build for Windows, Linux, and macOS.
-
-          ### 📦 Installation:
-          1. Download the archive for your operating system.
-          2. Extract the contents.
-          3. Run the `RadarSim` executable.
-
-          ---
-          *Scientifically accurate radar simulation engine.*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: release-assets
+      - name: Generate checksums
+        working-directory: release-assets
+        run: find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: RadarSim ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: release-assets/**/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

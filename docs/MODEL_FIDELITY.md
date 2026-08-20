@@ -1,110 +1,44 @@
-# Model Fidelity and Intended Use
+# Model fidelity and limitations
 
-RadarSim separates fast scenario-level analysis from signal-level processing. Results are
-meaningful only when the selected model, its inputs, and its validation domain match the
-question being studied. A model name or literature citation is not, by itself, evidence that a
-result is valid.
+This document is the boundary between implemented behaviour and effects that RadarSim does not claim to reproduce.
 
 ## Fidelity levels
 
-### Scenario level
+| Area | Implemented level | Principal limitation |
+|---|---|---|
+| Kinematics | Discrete 3-D point objects with static, constant-velocity, and configured manoeuvre updates | No six-degree-of-freedom aerodynamics or control system |
+| Radar link | Monostatic point-target power and thermal noise budget | No bistatic geometry, mutual coupling, hardware calibration, or scan-loss scheduler |
+| Detection | Albersheim thresholding and Swerling statistics | No compound target/clutter likelihood-ratio detector |
+| Atmosphere | Homogeneous-path ITU-R gas and rain specific attenuation | No refractivity ray tracing, ducting, multipath, diffraction, cloud, or fog |
+| RCS | User mean, simple aspect factor, Swerling fluctuation | No CAD-based electromagnetic scattering or micro-Doppler signature |
+| Land clutter | Terrain categories and Oh 1992 bare-soil backscatter | No vegetation canopy, buildings, shadowing, or spatial correlation map |
+| Sea clutter | NRL 2012 mean reflectivity plus K-distributed samples | No evolving electromagnetic sea surface or coherent sea spikes |
+| Pulse-Doppler | Complex-IQ LFM, delay, matched filter, MTI, FFT, ambiguity | No phase noise, timing jitter, array channels, or quantized converter model |
+| CFAR | Calibrated CA/GO/SO/OS 1-D and CA 2-D | Calibration assumes independent exponential reference power |
+| ECM | Generic noise, chaff, DRFM pull-off, false targets | No named-device data or waveform-recognition logic |
+| Receiver | Aggregate input power and Gaussian radial limiter diagnostic | No analogue filter chain, AGC loop dynamics, intermodulation cascade, or ADC bits |
+| Tracking | CV KF/EKF, NIS gate, global assignment, lifecycle | No IMM, MHT, JPDA, extended-target, or bias estimator |
+| Fusion | Timestamp propagation, independent information fusion, covariance intersection | No cross-covariance transport or decentralized consensus filter |
+| SAR | Broadside stripmap point-scatterer raw data and RDA focusing | No squint, topography, autofocus, polarimetry, omega-k, or chirp scaling |
+| ISAR | Range compression, translational alignment, range-Doppler image | Requires usable, approximately constant rotation rate |
 
-The scenario engine advances target truth states, evaluates line-of-sight geometry, computes
-mean received power and SNR, samples target RCS, and draws detections from a statistical
-detector model. It is intended for Monte Carlo detection, tracking, coverage, and engagement
-studies where individual ADC samples are not required.
+## Coordinate and sign conventions
 
-The detector is a square-law detector with a threshold derived from probability of false alarm.
-For non-fluctuating targets, conditional integrated power is evaluated with the non-central
-chi-square distribution. Swerling I through IV returns are averaged over their gamma RCS
-distributions. Slow cases retain an RCS realization across the integration interval; fast cases
-decorrelate pulse to pulse.
+Scenario vectors are Cartesian metres and metres per second. Most simulation views interpret `x` and `y` as a local horizontal plane and `z` as altitude. Some legacy docstrings use the term NED; algorithms consuming these vectors should rely on their explicit axis definition rather than assume geodetic NED. Positive radial velocity is away from the radar. Doppler follows the same sign.
 
-### Signal level
+Angles are radians in computational APIs and degrees in explicitly named configuration fields. Power ratios use \(10\log_{10}\); complex-voltage ratios use \(20\log_{10}\) only where an amplitude is being converted.
 
-The pulse-Doppler processor synthesizes complex baseband samples at the output of range
-compression and processes a coherent pulse interval with MTI, slow-time windowing, and a
-Doppler FFT. This is a parametric range-compressed model. It is not yet a receiver-front-end or
-raw-ADC model and must not be used to study quantization, saturation, phase noise, oscillator
-instability, fractional-delay filters, or analogue impairments.
+## Validity checks
 
-### Imaging level
+A numerically finite output is not evidence that a model is valid. For every study:
 
-SAR and ISAR processing is currently experimental. Image products are useful for algorithm and
-interface development, but are not radiometrically calibrated products. Quantitative resolution,
-PSLR, ISLR, geolocation, or image-quality claims require acquisition-geometry and point-target
-validation before release.
+1. verify that input frequency, angle, polarization, roughness, weather, and geometry fall inside the cited empirical domain;
+2. separate instrumented range/velocity from physical unambiguous range/velocity;
+3. identify whether an input is peak, average, pulse, coherent, or noncoherent power;
+4. report random seed and number of Monte Carlo trials;
+5. compare at least one limiting case with an analytic result; and
+6. avoid assigning public example parameters to real equipment performance.
 
-## Parameter authority
+## Claims RadarSim does not support
 
-Scenario files are the authority for radar, receiver, atmosphere, target, and simulation
-parameters. The loader rejects non-physical values and transfers the following quantities to the
-runtime model:
-
-- carrier frequency, peak power, antenna gain and azimuth/elevation beamwidth;
-- PRF, pulse width, receiver noise bandwidth, noise figure, system temperature and losses;
-- probability of false alarm and number of integrated pulses;
-- atmospheric temperature, pressure and water-vapour density;
-- clutter enablement, terrain class, land model and its calibrated surface parameters, sea
-  state and rain rate;
-- target kinematics, mean RCS, Swerling case and onboard jammer power.
-
-Values omitted by a scenario use documented defaults. A saved run must record both supplied and
-resolved values so that the result can be reproduced.
-
-## Verification and validation policy
-
-Each quantitative model must have:
-
-1. a mathematical definition and an identified source;
-2. units, conventions, assumptions, and a stated validity domain;
-3. independent reference points that were not generated by the implementation under test;
-4. boundary, monotonicity, conservation, and stochastic-distribution tests where applicable;
-5. an uncertainty statement and known limitations;
-6. traceability from scenario input through runtime state to exported result.
-
-Verification establishes that the equations were implemented correctly. Validation establishes
-that the selected equations adequately represent the intended real system. Both are required for
-a model to be described as validated. This policy follows the credibility structure of
-NASA-STD-7009B and its separation of implementation verification, solution verification,
-validation, input pedigree, uncertainty characterization, and result robustness.
-
-## Baseline references
-
-- NASA-STD-7009B, *Standard for Models and Simulations*, 2024.
-- IEEE Std 686-2017, *IEEE Standard Radar Definitions*.
-- M. I. Skolnik, *Radar Handbook*, 3rd edition, 2008.
-- M. A. Richards, *Fundamentals of Radar Signal Processing*, 2nd edition, 2014.
-- P. Swerling, “Probability of Detection for Fluctuating Targets,” IRE Transactions on
-  Information Theory, 1960, DOI: 10.1109/TIT.1960.1057561.
-- W. J. Albersheim, “A Closed-Form Approximation to Robertson's Detection Characteristics,”
-  Proceedings of the IEEE, 1981, DOI: 10.1109/PROC.1981.12082.
-- ITU-R P.676-13, *Attenuation by atmospheric gases and related effects*, 2022.
-- ITU-R P.838-3, *Specific attenuation model for rain for use in prediction methods*, 2005.
-- V. Gregers-Hansen and R. Mital, "An Improved Empirical Model for Radar Sea Clutter
-  Reflectivity," IEEE Transactions on Aerospace and Electronic Systems, 2012,
-  DOI: 10.1109/TAES.2012.6324732.
-- Y. Oh, K. Sarabandi, and F. T. Ulaby, "An Empirical Model and an Inversion Technique for
-  Radar Scattering from Bare Soil Surfaces," IEEE Transactions on Geoscience and Remote
-  Sensing, 1992, DOI: 10.1109/36.134086.
-- J. B. Billingsley, *Low-Angle Radar Land Clutter: Measurements and Empirical Models*,
-  William Andrew Publishing, 2002.
-
-## Known baseline limitations
-
-- Gaseous attenuation uses the P.676-13 Annex 1 line-by-line equations for a homogeneous
-  terrestrial path. Slant paths through height-dependent atmospheric profiles are not yet
-  represented.
-- The constant-gamma land model is a screening model. Terrain-class gamma values are nominal
-  priors; quantitative work requires measured or site-calibrated gamma. Oh-1992 is available for
-  bare soil only within its measured 10-70 degree incidence, L/C/X-band, and 0.1 <= ks <= 6
-  domain. It must not be substituted for a low-grazing Billingsley model. Sea clutter uses the NRL
-  model within its stated frequency, grazing-angle, and sea-state domain.
-- Scenario-level ECM does not yet model receiver saturation or waveform-dependent processing.
-- Pulse-Doppler synthesis starts from a range-compressed representation.
-- SAR/ISAR processing is not yet quantitatively validated.
-- Classifier training data is synthetic and must not be interpreted as operational recognition
-  performance.
-
-These limitations must remain visible in documentation and releases until the corresponding
-validation evidence exists.
+RadarSim results alone cannot establish detection range of a real sensor, radar signature of a real vehicle, jammer effectiveness against a real system, operational tactics, safety certification, or hardware compliance. Such claims require traceable measured inputs, validated propagation and hardware models, uncertainty budgets, and independent review.

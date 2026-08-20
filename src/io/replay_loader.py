@@ -203,7 +203,7 @@ class ReplayLoader:
                 if "metadata" in target_group.attrs:
                     try:
                         metadata = json.loads(target_group.attrs["metadata"])
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
 
                 self._target_data[target_id] = {

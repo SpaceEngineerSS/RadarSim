@@ -1,0 +1,9 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include CITATION.cff
+include RELEASE_NOTES.md
+recursive-include docs *.md *.rst *.py Makefile
+recursive-include docs/images *.png *.svg
+recursive-include examples *.py
+recursive-include scenarios *.json *.yaml

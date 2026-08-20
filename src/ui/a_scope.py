@@ -7,7 +7,7 @@ Shows:
     - Real-time signal power vs range
     - CFAR threshold overlay
     - Detection markers
-    - CFAR cell visualization on hover (Phase 23)
+    - CFAR cell visualization on hover
 
 Scientific Value: Visualize target returns breaking the noise floor.
 
@@ -33,7 +33,7 @@ class AScope(QWidget):
         - Real-time signal power curve
         - CFAR threshold overlay
         - Target detection markers
-        - CFAR cell hover visualization (Phase 23)
+        - CFAR cell hover visualization
     """
 
     def __init__(self, max_range_km: float = 150.0, parent: QWidget = None):
@@ -51,12 +51,12 @@ class AScope(QWidget):
         self._current_azimuth = 0.0
         self._targets = []
 
-        # CFAR parameters (Phase 23)
+        # CFAR parameters
         self._cfar_guard_cells = 2
         self._cfar_reference_cells = 8
         self._hover_range_idx = -1  # Current hover index
 
-        # Phase 28: Jamming state
+        # Jamming state
         self._jamming_active = False
         self._jsr_db = 0.0
 
@@ -147,7 +147,7 @@ class AScope(QWidget):
         )
         self.plot_widget.addItem(self.signal_scatter)
 
-        # ═══ PHASE 28: Jamming Noise Strobe ═══
+        # Jamming noise strobe
         self.jam_noise_curve = pg.PlotCurveItem(
             pen=pg.mkPen(color=(255, 80, 0, 160), width=2)
         )
@@ -160,7 +160,7 @@ class AScope(QWidget):
         self.jam_noise_curve.setVisible(False)
         self.jam_fill.setVisible(False)
 
-        # ═══ PHASE 23: CFAR CELL VISUALIZATION ═══
+        # CFAR cell visualization
         # Cell Under Test (CUT) marker
         self.cut_marker = pg.InfiniteLine(
             pos=0, angle=90, pen=pg.mkPen(color=(255, 50, 50), width=2)

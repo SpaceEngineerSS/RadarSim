@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
 from .analysis_panel import AnalysisPanel
 
-# Phase 20: Ambiguity Analysis
+# Ambiguity analysis
 try:
     from .analysis.ambiguity_plot import AmbiguityPlot
 
@@ -17,7 +17,7 @@ try:
 except ImportError:
     AMBIGUITY_AVAILABLE = False
 
-# Phase 21: ROC Curves
+# ROC curves
 try:
     from .analysis.roc_curve import ROCCurveWidget
 
@@ -25,7 +25,7 @@ try:
 except ImportError:
     ROC_AVAILABLE = False
 
-# Phase 21: SNR Histogram
+# SNR histogram
 try:
     from .analysis.snr_histogram import SNRHistogramWidget
 
@@ -87,21 +87,21 @@ class AnalysisWindow(QMainWindow):
         self.analysis_panel = AnalysisPanel()
         self.tabs.addTab(self.analysis_panel, "📈 Recording Analysis")
 
-        # Tab 2: Ambiguity Analysis (Phase 20)
+        # Tab 2: ambiguity analysis
         if AMBIGUITY_AVAILABLE:
             self.ambiguity_plot = AmbiguityPlot()
             self.tabs.addTab(self.ambiguity_plot, "📊 Ambiguity (PRF)")
         else:
             self.ambiguity_plot = None
 
-        # Tab 3: ROC Curves (Phase 21)
+        # Tab 3: ROC curves
         if ROC_AVAILABLE:
             self.roc_curve = ROCCurveWidget()
             self.tabs.addTab(self.roc_curve, "📉 ROC Curves")
         else:
             self.roc_curve = None
 
-        # Tab 4: SNR Histogram (Phase 21)
+        # Tab 4: SNR histogram
         if SNR_HIST_AVAILABLE:
             self.snr_histogram = SNRHistogramWidget()
             self.tabs.addTab(self.snr_histogram, "📊 SNR Stats")

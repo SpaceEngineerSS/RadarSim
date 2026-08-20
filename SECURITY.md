@@ -1,30 +1,17 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported releases
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+Security fixes are provided for the latest major release. Version 3.x is currently supported; older releases should be upgraded before reporting a version-specific issue.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability in RadarSim, please report it responsibly:
+Do not open a public issue containing an exploitable vulnerability. Use the repository’s private GitHub Security Advisory reporting channel: `Security` → `Advisories` → `Report a vulnerability`. Include affected versions, operating system, reproduction steps, impact, and a minimal proof of concept. The maintainer will acknowledge a complete report as soon as practical and coordinate disclosure after a fix is available.
 
-1. **Do NOT** open a public GitHub issue for security vulnerabilities.
-2. Email the maintainer directly at: [Insert email or use GitHub Security Advisories]
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-4. Allow up to 72 hours for initial response.
+## Security boundaries
 
-## Security Best Practices
+RadarSim does not require an account, telemetry service, remote API, or network connection at runtime. It reads local scenario and recording files and may export local files selected by the user.
 
-RadarSim is a simulation tool and does not:
-- Collect user data
-- Connect to external servers
-- Require authentication
+YAML uses `safe_load`, and replay metadata uses JSON parsing. These choices prevent intentional execution of serialized Python objects, but untrusted files can still consume memory or CPU. Open scenarios and HDF5 recordings only from trusted sources, keep scientific Python and PySide6 dependencies updated, and run third-party extensions in an isolated environment.
 
-However, users should:
-- Only load scenario files from trusted sources
-- Be cautious with third-party plugins or modifications
+Desktop release artifacts are built by the public GitHub Actions workflow. Verify the release tag and repository origin before running a downloaded executable.

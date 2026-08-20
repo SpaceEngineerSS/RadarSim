@@ -28,11 +28,9 @@ import pytest
 
 from src.simulation.network_manager import (
     CovarianceIntersection,
-    FusedTrack,
     LatencyModel,
     NetworkManager,
     NetworkTrack,
-    RadarNode,
     StrobeReport,
     StrobeTriangulator,
     TrackAssociator,
@@ -195,6 +193,26 @@ class TestMultiEstimateCI:
         x_f, P_f = CovarianceIntersection.fuse_multiple([x], [P])
         np.testing.assert_array_equal(x_f, x)
         np.testing.assert_array_equal(P_f, P)
+
+    def test_multi_estimate_ci_is_invariant_to_source_order(self):
+        states = [
+            np.array([1000.0, 2000.0, 50.0, 30.0]),
+            np.array([1010.0, 1990.0, 48.0, 32.0]),
+            np.array([995.0, 2005.0, 51.0, 29.0]),
+        ]
+        covariances = [
+            np.diag([100.0, 200.0, 10.0, 20.0]),
+            np.diag([150.0, 100.0, 15.0, 10.0]),
+            np.diag([120.0, 150.0, 12.0, 15.0]),
+        ]
+        x_forward, P_forward = CovarianceIntersection.fuse_multiple(
+            states, covariances
+        )
+        x_reverse, P_reverse = CovarianceIntersection.fuse_multiple(
+            list(reversed(states)), list(reversed(covariances))
+        )
+        np.testing.assert_allclose(x_forward, x_reverse, atol=1e-6)
+        np.testing.assert_allclose(P_forward, P_reverse, atol=1e-6)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -443,8 +461,9 @@ class TestTrackAssociation:
     def test_nearby_tracks_associate(self):
         """Tracks within gate should be associated."""
         assoc = TrackAssociator(gate_distance_m=500)
-        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), np.eye(4), 0.0)
-        t2 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 48, 32]), np.eye(4), 0.0)
+        covariance = np.diag([400.0, 400.0, 25.0, 25.0])
+        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), covariance, 0.0)
+        t2 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 48, 32]), covariance, 0.0)
 
         pairs = assoc.associate([t1], [t2])
         assert len(pairs) == 1
@@ -452,8 +471,9 @@ class TestTrackAssociation:
     def test_distant_tracks_no_associate(self):
         """Tracks outside gate should not associate."""
         assoc = TrackAssociator(gate_distance_m=500)
-        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), np.eye(4), 0.0)
-        t2 = NetworkTrack("R2:1", "R2", np.array([5000, 8000, 48, 32]), np.eye(4), 0.0)
+        covariance = np.diag([400.0, 400.0, 25.0, 25.0])
+        t1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 50, 30]), covariance, 0.0)
+        t2 = NetworkTrack("R2:1", "R2", np.array([5000, 8000, 48, 32]), covariance, 0.0)
 
         pairs = assoc.associate([t1], [t2])
         assert len(pairs) == 0
@@ -461,10 +481,11 @@ class TestTrackAssociation:
     def test_multiple_tracks_greedy(self):
         """Greedy matching: each track used at most once."""
         assoc = TrackAssociator(gate_distance_m=1000)
-        t_a1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 0, 0]), np.eye(4), 0.0)
-        t_a2 = NetworkTrack("R1:2", "R1", np.array([5000, 6000, 0, 0]), np.eye(4), 0.0)
-        t_b1 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 0, 0]), np.eye(4), 0.0)
-        t_b2 = NetworkTrack("R2:2", "R2", np.array([5100, 5950, 0, 0]), np.eye(4), 0.0)
+        covariance = np.diag([900.0, 900.0, 25.0, 25.0])
+        t_a1 = NetworkTrack("R1:1", "R1", np.array([1000, 2000, 0, 0]), covariance, 0.0)
+        t_a2 = NetworkTrack("R1:2", "R1", np.array([5000, 6000, 0, 0]), covariance, 0.0)
+        t_b1 = NetworkTrack("R2:1", "R2", np.array([1050, 2020, 0, 0]), covariance, 0.0)
+        t_b2 = NetworkTrack("R2:2", "R2", np.array([5100, 5950, 0, 0]), covariance, 0.0)
 
         pairs = assoc.associate([t_a1, t_a2], [t_b1, t_b2])
         assert len(pairs) == 2
@@ -522,6 +543,67 @@ class TestNetworkManager:
         tr_min = min(np.trace(t1.covariance), np.trace(t2.covariance))
         assert tr_fused <= tr_min + 1e-4
 
+    def test_link_latency_prevents_early_track_availability(self):
+        nm = NetworkManager(link_delay_ms=500)
+        nm.register_node("R1", np.zeros(2))
+        track = NetworkTrack(
+            "R1:1",
+            "R1",
+            np.array([1000.0, 0.0, 10.0, 0.0]),
+            np.eye(4),
+            0.0,
+        )
+        nm.submit_tracks("R1", [track], current_time=0.0)
+
+        assert nm.fuse(current_time=0.49) == []
+        fused = nm.fuse(current_time=0.5)
+        assert len(fused) == 1
+        assert fused[0].state[0] == pytest.approx(1005.0)
+        assert fused[0].covariance[0, 0] > track.covariance[0, 0]
+
+    def test_tracks_are_aligned_to_common_fusion_time(self):
+        nm = NetworkManager(link_delay_ms=0, association_gate_m=500)
+        nm.register_node("R1", np.zeros(2))
+        nm.register_node("R2", np.array([10_000.0, 0.0]))
+        covariance = np.diag([100.0, 100.0, 4.0, 4.0])
+        old_track = NetworkTrack(
+            "R1:1",
+            "R1",
+            np.array([0.0, 0.0, 100.0, 0.0]),
+            covariance,
+            0.0,
+        )
+        current_track = NetworkTrack(
+            "R2:1",
+            "R2",
+            np.array([100.0, 0.0, 100.0, 0.0]),
+            covariance,
+            1.0,
+        )
+        nm.submit_tracks("R1", [old_track], current_time=1.0)
+        nm.submit_tracks("R2", [current_track], current_time=1.0)
+
+        fused = nm.fuse(current_time=1.0)
+        assert len(fused) == 1
+        assert fused[0].state[0] == pytest.approx(100.0)
+        assert set(fused[0].source_nodes) == {"R1", "R2"}
+
+    def test_unmatched_tracks_from_secondary_nodes_are_retained(self):
+        nm = NetworkManager(link_delay_ms=0, association_gate_m=200)
+        nm.register_node("R1", np.zeros(2))
+        nm.register_node("R2", np.ones(2))
+        covariance = np.diag([100.0, 100.0, 10.0, 10.0])
+        track_a = NetworkTrack("R1:1", "R1", np.zeros(4), covariance, 0.0)
+        track_b = NetworkTrack(
+            "R2:1", "R2", np.array([5000.0, 0.0, 0.0, 0.0]), covariance, 0.0
+        )
+        nm.submit_tracks("R1", [track_a], 0.0)
+        nm.submit_tracks("R2", [track_b], 0.0)
+
+        fused = nm.fuse(0.0)
+        assert len(fused) == 2
+        assert {tuple(track.source_nodes) for track in fused} == {("R1",), ("R2",)}
+
     def test_jammer_triangulation(self):
         """Jammer triangulation through network manager."""
         nm = NetworkManager()
@@ -549,7 +631,7 @@ class TestNetworkManager:
                 current_time=0.0,
             )
 
-        jammer_locs = nm.triangulate_jammers()
+        jammer_locs = nm.triangulate_jammers(current_time=0.1)
         assert len(jammer_locs) == 1
 
         est_pos, _ = jammer_locs[0]

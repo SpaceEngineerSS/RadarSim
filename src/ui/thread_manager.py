@@ -176,7 +176,7 @@ class SimulationWorker(QObject):
                         "classification": track.classification,
                         "confidence": track.confidence,
                     }
-                    # Phase 27: Add covariance for EKF uncertainty ellipse
+                    # Covariance drives the EKF uncertainty ellipse.
                     if hasattr(track.state, "P") and track.state.P is not None:
                         track_dict["covariance"] = track.state.P.tolist()
                     tracks_data.append(track_dict)
@@ -208,7 +208,7 @@ class SimulationWorker(QObject):
         except Exception:
             pass  # Fail silently to prevent crash
 
-        # ═══ PHASE 26: PULSE-DOPPLER R-D MAP ═══
+        # Pulse-Doppler range-Doppler map
         rd_map_data = None
         pd_metadata = None
         if (
@@ -226,6 +226,13 @@ class SimulationWorker(QObject):
                 "n_pulses": rdm.n_pulses,
                 "prf_hz": rdm.prf_hz,
                 "wavelength_m": rdm.wavelength_m,
+                "sample_rate_hz": rdm.sample_rate_hz,
+                "range_sample_spacing_m": rdm.range_sample_spacing_m,
+                "max_instrumented_range_m": rdm.max_instrumented_range_m,
+                "max_unambiguous_range_m": rdm.max_unambiguous_range_m,
+                "max_unambiguous_velocity_mps": rdm.max_unambiguous_velocity_mps,
+                "coherent_processing_gain_db": rdm.coherent_processing_gain_db,
+                "window_enbw_bins": rdm.window_enbw_bins,
             }
 
         return {
@@ -246,13 +253,13 @@ class SimulationWorker(QObject):
             "jamming_active": getattr(self.engine, "ecm_active", False),
             "ecm_type": getattr(self.engine, "ecm_type", "noise"),
             "false_targets": false_targets_data,
-            # Phase 26: Pulse-Doppler
+            # Pulse-Doppler state
             "pulse_doppler_enabled": getattr(
                 self.engine, "pulse_doppler_enabled", False
             ),
             "rd_map": rd_map_data,
             "pd_metadata": pd_metadata,
-            # Phase 28: ECCM state
+            # ECCM state
             "eccm": self._get_eccm_state(),
             "log": {
                 "total_opportunities": self.engine.log.total_opportunities,
@@ -428,13 +435,15 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[LPI] Engine update failed: {e}")
 
-    def set_fusion_mode(self, enabled: bool, method: str = "kalman"):
+    def set_fusion_mode(
+        self, enabled: bool, method: str = "covariance_intersection"
+    ):
         """
         Set sensor fusion mode in the simulation engine.
 
         Args:
             enabled: Whether sensor fusion is active
-            method: Fusion method ('kalman', 'particle', 'bayesian')
+            method: ``covariance_intersection`` or ``independent_gaussian``
         """
         try:
             # Store fusion state in engine
@@ -448,7 +457,7 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[FUSION] Engine update failed: {e}")
 
-    # ═══ PHASE 19: CLUTTER, MTI & ECCM CONTROLS ═══
+    # Clutter, MTI, and ECCM controls
 
     def set_clutter_mode(self, enabled: bool, terrain_type: str = "rural"):
         """
@@ -507,7 +516,7 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[ECCM] Engine update failed: {e}")
 
-    # ═══ PHASE 20: MONOPULSE TRACKING ═══
+    # Monopulse tracking
 
     def set_monopulse_mode(self, enabled: bool):
         """
@@ -529,7 +538,7 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[MONOPULSE] Engine update failed: {e}")
 
-    # ═══ PHASE 26: PULSE-DOPPLER PROCESSING ═══
+    # Pulse-Doppler processing
 
     def set_pulse_doppler_mode(
         self,
@@ -564,7 +573,7 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[PD] Engine update failed: {e}")
 
-    # ═══ PHASE 27: EKF TRACKING ═══
+    # EKF tracking
 
     def set_ekf_mode(self, enabled: bool):
         """
@@ -593,7 +602,7 @@ class SimulationThread(QThread):
         except Exception as e:
             print(f"[EKF] Engine update failed: {e}")
 
-    # ═══ PHASE 28: ELECTRONIC WARFARE ═══
+    # Electronic-warfare controls
 
     def __init_eccm(self):
         """Lazy-initialize ECCM controller."""

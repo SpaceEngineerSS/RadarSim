@@ -13,13 +13,11 @@ __all__ = [
     "SimulationResult",
     "ScenarioGenerator",
     "ParameterSpace",
-    # Phase 29: Network Fusion
     "NetworkManager",
     "CovarianceIntersection",
     "StrobeTriangulator",
 ]
 
-# Phase 29: Network Fusion (conditional)
 try:
     from .network_manager import (
         CovarianceIntersection,

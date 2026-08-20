@@ -24,7 +24,6 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.physics.rcs import SwerlingModel
 from src.simulation.engine import (
     SimulationEngine,
     validate_detection_logic,
@@ -34,7 +33,6 @@ from src.simulation.objects import (
     KinematicState,
     MotionModel,
     Radar,
-    SimulationState,
     Target,
 )
 

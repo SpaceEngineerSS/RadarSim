@@ -1,68 +1,41 @@
-# Contributing to RadarSim
+# Contributing
 
-Thank you for your interest in contributing to RadarSim! This document provides guidelines for contributions.
+Contributions should keep scientific claims, code, tests, and documentation synchronized.
 
-## How to Contribute
-
-### 🐛 Reporting Bugs
-
-1. Search existing issues to avoid duplicates
-2. Use the bug report template
-3. Include:
-   - Python version and OS
-   - Steps to reproduce
-   - Expected vs actual behavior
-   - Error traceback if applicable
-
-### 💡 Feature Requests
-
-1. Check existing issues and roadmap
-2. Describe the feature and use case
-3. Explain why it benefits the project
-
-### 🔧 Pull Requests
-
-1. **Fork** the repository
-2. **Create a branch**: `git checkout -b feature/your-feature-name`
-3. **Make changes** following code style
-4. **Test**: Run `pytest tests/` before submitting
-5. **Commit**: Use descriptive commit messages
-6. **Push**: `git push origin feature/your-feature-name`
-7. **Open PR**: Reference related issues
-
-## Code Style
-
-- Follow PEP 8
-- Use type hints for function signatures
-- Add docstrings with NumPy style
-- Keep functions focused and testable
-
-## Physics Contributions
-
-RadarSim values scientific accuracy. When adding physics-related code:
-
-1. **Cite sources** in docstrings (IEEE, ITU, textbooks)
-2. **Validate** against published results when possible
-3. **Document units** clearly (SI preferred)
-4. **Use Numba JIT** for performance-critical loops
-
-## Testing
+## Development setup
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_physics_core.py -v
-
-# With coverage
-pytest tests/ --cov=src --cov-report=html
+git clone https://github.com/SpaceEngineerSS/RadarSim.git
+cd RadarSim
+python -m venv .venv
+python -m pip install -e ".[gui,dev,docs]"
 ```
 
-## License
+Use a topic branch in your fork and open a pull request against `main`. Describe the physical or software requirement, the chosen method, its limitations, and the verification evidence.
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+## Required checks
 
----
+```bash
+python -m ruff check src tests
+python -m pytest -q
+python -m bandit -r src -x tests -ll
+python -m build
+```
 
-Questions? Open a discussion or reach out to the maintainers!
+For UI changes, run the desktop application and retain the offscreen smoke tests. For documentation changes, build Sphinx with `python -m sphinx -W --keep-going -b html docs/source docs/_build/html`.
+
+## Scientific changes
+
+A model change must include a primary publication or standard, SI units, sign conventions, a validity domain, failure behaviour outside that domain, and tests from an analytic identity or published numerical case. Monte Carlo validation needs a fixed seed, trial count, tolerance rationale, and a test that would catch an incorrect distribution or scale.
+
+Do not present example platform names or open-source parameter guesses as measured equipment performance. Do not silently substitute one algorithm for another. If an advertised method is unavailable, return a clear `NotImplementedError` and document it.
+
+## Code style
+
+Use type hints on public functions, focused modules, and docstrings where units or non-obvious contracts matter. Prefer stable linear algebra and explicit validation. Comments should explain a scientific choice, invariant, or unusual constraint; they should not narrate ordinary syntax. Keep UI formulas delegated to the scientific core.
+
+## Compatibility
+
+Scenario and recording changes need round-trip tests. Breaking public APIs or file formats require a major-version note. New dependencies must be justified and added to `pyproject.toml`; `requirements.txt` remains the convenient application install list.
+
+Contributions are licensed under the repository’s MIT License.

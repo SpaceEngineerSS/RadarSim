@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
         self.lpi_enabled = False
         self.lpi_technique = "FHSS"  # FHSS, DSSS, Costas
         self.fusion_enabled = False
-        self.fusion_method = "kalman"  # kalman, particle, bayesian
+        self.fusion_method = "covariance_intersection"
 
         # SAR Viewer window
         self.sar_viewer = None
@@ -349,7 +349,7 @@ class MainWindow(QMainWindow):
         load_scenario_action.triggered.connect(self._on_load_scenario)
         file_menu.addAction(load_scenario_action)
 
-        # Save Scenario action (Phase 22)
+        # Save-scenario action
         save_scenario_action = QAction("&Save Scenario As...", self)
         save_scenario_action.setShortcut("Ctrl+Shift+S")
         save_scenario_action.triggered.connect(self._on_save_scenario)
@@ -458,26 +458,20 @@ class MainWindow(QMainWindow):
 
         fusion_menu.addSeparator()
 
-        # Fusion Method selection
-        self.fusion_kalman = QAction("Kalman Filter", self)
-        self.fusion_kalman.setCheckable(True)
-        self.fusion_kalman.setChecked(True)
-        self.fusion_kalman.triggered.connect(lambda: self._set_fusion_method("kalman"))
-        fusion_menu.addAction(self.fusion_kalman)
-
-        self.fusion_particle = QAction("Particle Filter", self)
-        self.fusion_particle.setCheckable(True)
-        self.fusion_particle.triggered.connect(
-            lambda: self._set_fusion_method("particle")
+        self.fusion_ci = QAction("Covariance Intersection", self)
+        self.fusion_ci.setCheckable(True)
+        self.fusion_ci.setChecked(True)
+        self.fusion_ci.triggered.connect(
+            lambda: self._set_fusion_method("covariance_intersection")
         )
-        fusion_menu.addAction(self.fusion_particle)
+        fusion_menu.addAction(self.fusion_ci)
 
-        self.fusion_bayesian = QAction("Bayesian Fusion", self)
-        self.fusion_bayesian.setCheckable(True)
-        self.fusion_bayesian.triggered.connect(
-            lambda: self._set_fusion_method("bayesian")
+        self.fusion_independent = QAction("Independent Gaussian", self)
+        self.fusion_independent.setCheckable(True)
+        self.fusion_independent.triggered.connect(
+            lambda: self._set_fusion_method("independent_gaussian")
         )
-        fusion_menu.addAction(self.fusion_bayesian)
+        fusion_menu.addAction(self.fusion_independent)
 
         advanced_menu.addSeparator()
 
@@ -489,7 +483,7 @@ class MainWindow(QMainWindow):
 
         advanced_menu.addSeparator()
 
-        # ═══ PHASE 19: CLUTTER, MTI & ECCM ═══
+        # Clutter, MTI, and ECCM
 
         # Environmental Clutter
         self.clutter_action = QAction("🌧️ Enable Environmental &Clutter", self)
@@ -520,7 +514,7 @@ class MainWindow(QMainWindow):
 
         advanced_menu.addSeparator()
 
-        # ═══ PHASE 20: MONOPULSE TRACKING ═══
+        # Monopulse tracking
         self.monopulse_action = QAction("🎯 Enable &Monopulse Tracking", self)
         self.monopulse_action.setCheckable(True)
         self.monopulse_action.setChecked(False)
@@ -532,7 +526,7 @@ class MainWindow(QMainWindow):
 
         advanced_menu.addSeparator()
 
-        # ═══ PHASE 26: PULSE-DOPPLER PROCESSING ═══
+        # Pulse-Doppler processing
         self.pd_action = QAction("📡 Enable &Pulse-Doppler Processing", self)
         self.pd_action.setCheckable(True)
         self.pd_action.setChecked(False)
@@ -556,7 +550,7 @@ class MainWindow(QMainWindow):
 
         advanced_menu.addSeparator()
 
-        # ═══ PHASE 27: EXTENDED KALMAN FILTER ═══
+        # Extended Kalman filter
         self.ekf_action = QAction("🎯 Use Extended &Kalman Filter (Polar)", self)
         self.ekf_action.setCheckable(True)
         self.ekf_action.setChecked(False)
@@ -568,7 +562,7 @@ class MainWindow(QMainWindow):
         self.ekf_action.triggered.connect(self._on_ekf_toggled)
         advanced_menu.addAction(self.ekf_action)
 
-        # ═══ PHASE 28: ELECTRONIC WARFARE ═══
+        # Electronic-warfare controls
         advanced_menu.addSeparator()
         ew_menu = advanced_menu.addMenu("⚡ Electronic Warfare")
 
@@ -1195,9 +1189,8 @@ class MainWindow(QMainWindow):
         self.fusion_method = method
 
         # Update checkmarks
-        self.fusion_kalman.setChecked(method == "kalman")
-        self.fusion_particle.setChecked(method == "particle")
-        self.fusion_bayesian.setChecked(method == "bayesian")
+        self.fusion_ci.setChecked(method == "covariance_intersection")
+        self.fusion_independent.setChecked(method == "independent_gaussian")
 
         # Notify engine if fusion is enabled
         if self.fusion_enabled and self.sim_thread:
@@ -1286,7 +1279,7 @@ class MainWindow(QMainWindow):
         self.sar_viewer.show()
         self.sar_viewer.raise_()
 
-    # ═══ PHASE 19: CLUTTER, MTI & ECCM HANDLERS ═══
+    # Clutter, MTI, and ECCM handlers
 
     def _on_clutter_toggled(self, checked: bool) -> None:
         """Handle Clutter toggle."""
@@ -1320,7 +1313,7 @@ class MainWindow(QMainWindow):
         status = "ACTIVE (precision angle tracking)" if checked else "OFF"
         self.status_bar.showMessage(f"MONOPULSE: {status}")
 
-    # ═══ PHASE 26: PULSE-DOPPLER HANDLERS ═══
+    # Pulse-Doppler handlers
 
     def _on_pulse_doppler_toggled(self, checked: bool) -> None:
         """Handle Pulse-Doppler Processing toggle."""
@@ -1353,7 +1346,7 @@ class MainWindow(QMainWindow):
         status = "MTI 2-Pulse ACTIVE (clutter suppression)" if checked else "MTI OFF"
         self.status_bar.showMessage(f"PULSE-DOPPLER: {status}")
 
-    # ═══ PHASE 27: EKF HANDLER ═══
+    # EKF handler
 
     def _on_ekf_toggled(self, checked: bool) -> None:
         """Handle EKF tracking toggle."""
@@ -1363,7 +1356,7 @@ class MainWindow(QMainWindow):
         status = "EKF ACTIVE [r,θ] polar" if checked else "Linear KF [x,y] Cartesian"
         self.status_bar.showMessage(f"TRACKING: {status}")
 
-    # ═══ PHASE 28: ELECTRONIC WARFARE HANDLERS ═══
+    # Electronic-warfare handlers
 
     def _on_jamming_toggled(self, checked: bool) -> None:
         """Handle Jamming Environment toggle."""
@@ -1391,7 +1384,7 @@ class MainWindow(QMainWindow):
         status = "⚡ PRF STAGGER ON (±5% jitter)" if checked else "Fixed PRF"
         self.status_bar.showMessage(f"ECCM: {status}")
 
-    # ═══ PHASE 22: SCENARIO EXPORT ═══
+    # Scenario export
 
     def _on_save_scenario(self) -> None:
         """Save current simulation state to YAML."""
@@ -1433,7 +1426,7 @@ class MainWindow(QMainWindow):
         except ImportError as e:
             print(f"[EXPORT] Exporter not available: {e}")
 
-    # ═══ PHASE 22: KEYBOARD SHORTCUTS ═══
+    # Keyboard shortcuts
 
     def keyPressEvent(self, event) -> None:
         """Handle global keyboard shortcuts."""

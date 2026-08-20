@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from src.tracking.ekf import ExtendedKalmanFilter
-from src.tracking.kalman import KalmanState, LinearKalmanFilter
+from src.tracking.kalman import LinearKalmanFilter
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
@@ -418,5 +418,5 @@ class TestMatrixInverse:
         """M · M⁻¹ must equal I."""
         M = np.array([[5.0, 2.0], [2.0, 3.0]])
         M_inv = ExtendedKalmanFilter._invert_2x2(M)
-        I = M @ M_inv
-        assert np.allclose(I, np.eye(2), atol=1e-12)
+        identity = M @ M_inv
+        assert np.allclose(identity, np.eye(2), atol=1e-12)

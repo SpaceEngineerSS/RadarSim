@@ -268,8 +268,6 @@ class TestDopplerShift:
         fd = calculate_doppler_shift(radar, target_pos, target_vel, radar_pos)
 
         # Radial velocity component (simplified: mostly along x-axis)
-        expected_fd_approx = 2 * 300 / radar.wavelength  # ~20 kHz
-
         # Approaching target should have negative Doppler (positive fd by convention)
         # Sign depends on radial velocity convention
         assert abs(fd) > 15000, f"Doppler shift too low: {abs(fd):.0f} Hz"
