@@ -30,13 +30,19 @@ jobs:
         include:
           - os: windows-latest
             platform: Windows_x86_64
-            executable: build/RadarSim.exe
+            executable: dist/RadarSim.exe
+            data_separator: ";"
+            gui_option: --windowed
           - os: ubuntu-latest
             platform: Linux_x86_64
-            executable: build/RadarSim
+            executable: dist/RadarSim
+            data_separator: ":"
+            gui_option: ""
           - os: macos-latest
             platform: macOS_arm64
-            executable: build/RadarSim
+            executable: dist/RadarSim
+            data_separator: ":"
+            gui_option: ""
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -45,19 +51,9 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[gui]"
-      - name: Install Linux system libraries
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y patchelf libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
-      - uses: Nuitka/Nuitka-Action@99c9d3ab258c7008c0604617d925574101327e5d
-        with:
-          nuitka-version: 4.1.1
-          script-name: run_gui.py
-          mode: onefile
-          enable-plugins: pyside6
-          include-data-dir: scenarios=scenarios
-          output-file: RadarSim
+      - run: python -m pip install pyinstaller==6.22.2
+      - name: Build desktop application
+        run: python -m PyInstaller --noconfirm --clean --onefile --name RadarSim --exclude-module torch --exclude-module tensorflow --exclude-module pytest --exclude-module pygame --exclude-module sphinx --exclude-module docutils --add-data "scenarios${{ matrix.data_separator }}scenarios" ${{ matrix.gui_option }} run_gui.py
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh

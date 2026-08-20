@@ -39,7 +39,7 @@ This release replaces several approximate or placeholder paths with physically t
 - Unified the installed `radarsim` and source `run_gui.py` entry points on PySide6.
 - Wired target-inspector probability of detection to the simulation’s Swerling calculation and corrected SAR display normalization and metrics.
 - Removed obsolete optional modules and binary assets; RadarSim has no remote-service dependency.
-- Added UI smoke tests, strict lint/test/security/package CI, and tag-driven multi-platform Nuitka release builds.
+- Added UI smoke tests, strict lint/test/security/package CI, and tag-driven multi-platform PyInstaller release builds.
 - Replaced legacy phase notes with model equations, limitations, methodology, architecture, user guide, primary references, and release notes.
 
 ### Verification
