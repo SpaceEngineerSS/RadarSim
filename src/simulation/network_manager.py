@@ -305,7 +305,7 @@ class CovarianceIntersection:
         covariances: List[np.ndarray],
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Fuse N estimates using sequential pairwise CI.
+        Fuse N estimates with a jointly optimized covariance-intersection weight vector.
 
         Args:
             states: List of state vectors
@@ -326,34 +326,63 @@ class CovarianceIntersection:
             if state.shape != states[0].shape:
                 raise ValueError("all CI state dimensions must match")
 
-        information_matrices = [np.linalg.inv(P) for P in covariances]
+        identity = np.eye(states[0].size)
+        information_matrices = [
+            np.linalg.solve(covariance, identity) for covariance in covariances
+        ]
 
         def objective(weights: np.ndarray) -> float:
             information = sum(
                 weight * matrix
                 for weight, matrix in zip(weights, information_matrices)
             )
-            return float(np.trace(np.linalg.inv(information)))
+            return float(np.trace(np.linalg.solve(information, identity)))
+
+        def gradient(weights: np.ndarray) -> np.ndarray:
+            information = sum(
+                weight * matrix
+                for weight, matrix in zip(weights, information_matrices)
+            )
+            covariance = np.linalg.solve(information, identity)
+            return -np.array(
+                [
+                    np.trace(covariance @ matrix @ covariance)
+                    for matrix in information_matrices
+                ]
+            )
 
         n_estimates = len(states)
         initial = np.full(n_estimates, 1.0 / n_estimates)
         result = minimize(
             objective,
             initial,
+            jac=gradient,
             method="SLSQP",
             bounds=[(0.0, 1.0)] * n_estimates,
             constraints={"type": "eq", "fun": lambda weights: np.sum(weights) - 1.0},
-            options={"ftol": 1e-12, "maxiter": 200},
+            options={"ftol": 1e-10, "maxiter": 1000},
         )
-        if not result.success:
-            raise RuntimeError(f"CI weight optimization failed: {result.message}")
-        weights = np.clip(result.x, 0.0, 1.0)
-        weights /= np.sum(weights)
+        best_index = int(np.argmin([np.trace(value) for value in covariances]))
+        fallback = np.zeros(n_estimates)
+        fallback[best_index] = 1.0
+        candidate = np.asarray(result.x, dtype=float)
+        if np.all(np.isfinite(candidate)):
+            candidate = np.clip(candidate, 0.0, 1.0)
+            total = candidate.sum()
+            if total > 0.0:
+                candidate /= total
+        if (
+            not np.all(np.isfinite(candidate))
+            or not np.isclose(candidate.sum(), 1.0, atol=1e-8)
+            or objective(candidate) > objective(fallback) + 1e-8
+        ):
+            candidate = fallback
+        weights = candidate
         fused_information = sum(
             weight * matrix
             for weight, matrix in zip(weights, information_matrices)
         )
-        P_fused = np.linalg.inv(fused_information)
+        P_fused = np.linalg.solve(fused_information, identity)
         information_state = sum(
             weight * matrix @ state
             for weight, matrix, state in zip(weights, information_matrices, states)

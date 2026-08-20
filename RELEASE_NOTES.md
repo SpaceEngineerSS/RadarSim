@@ -12,6 +12,6 @@ Obsolete optional modules and binary assets have been removed. RadarSim has no t
 
 This release intentionally reports omega-k and chirp-scaling SAR processing as unimplemented. It also does not claim hardware-certified performance, real-platform signatures, refractive ray tracing, multipath, CAD electromagnetic scattering, or classified equipment behaviour. See `docs/MODEL_FIDELITY.md` before interpreting simulation results.
 
-Verification for the source release: 340 automated tests, strict Ruff checks, offscreen PySide6 smoke tests, Bandit medium/high-severity scan, Sphinx warnings-as-errors build, and wheel/source-distribution build.
+Verification for the source release: 341 automated tests, strict Ruff checks, offscreen PySide6 smoke tests, Bandit medium/high-severity scan, Sphinx warnings-as-errors build, and wheel/source-distribution build.
 
 Breaking changes include removal of obsolete modules/assets, corrected signal calibration and axes, stricter input validation, and revised fusion/tracking lifecycle semantics. Existing scripts should pin 2.4.0 until their assumptions are checked against the 3.0 documentation.

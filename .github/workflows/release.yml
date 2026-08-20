@@ -50,9 +50,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y patchelf libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
-      - uses: Nuitka/Nuitka-Action@main
+      - uses: Nuitka/Nuitka-Action@99c9d3ab258c7008c0604617d925574101327e5d
         with:
-          nuitka-version: stable
+          nuitka-version: 4.1.1
           script-name: run_gui.py
           mode: onefile
           enable-plugins: pyside6

@@ -92,7 +92,7 @@ python -m bandit -r src -x tests -ll
 python -m build
 ```
 
-The current suite contains 340 tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for model-change requirements and [CHANGELOG.md](CHANGELOG.md) for release history.
+The current suite contains 341 tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for model-change requirements and [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License and citation
 

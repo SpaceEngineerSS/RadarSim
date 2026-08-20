@@ -26,6 +26,7 @@ import time
 import numpy as np
 import pytest
 
+import src.simulation.network_manager as network_manager
 from src.simulation.network_manager import (
     CovarianceIntersection,
     LatencyModel,
@@ -213,6 +214,24 @@ class TestMultiEstimateCI:
         )
         np.testing.assert_allclose(x_forward, x_reverse, atol=1e-6)
         np.testing.assert_allclose(P_forward, P_reverse, atol=1e-6)
+
+    def test_feasible_optimizer_result_is_used_despite_status(self, monkeypatch):
+        class Result:
+            x = np.array([0.5, 0.5])
+            success = False
+            message = "Positive directional derivative for linesearch"
+
+        monkeypatch.setattr(network_manager, "minimize", lambda *args, **kwargs: Result())
+        states = [np.zeros(2), np.ones(2)]
+        covariances = [np.diag([1.0, 4.0]), np.diag([4.0, 1.0])]
+
+        _, fused_covariance = CovarianceIntersection.fuse_multiple(
+            states, covariances
+        )
+
+        assert np.trace(fused_covariance) <= min(
+            np.trace(covariance) for covariance in covariances
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════

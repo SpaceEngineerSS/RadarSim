@@ -44,7 +44,7 @@ This release replaces several approximate or placeholder paths with physically t
 
 ### Verification
 
-- 340 automated tests across supported Python versions.
+- 341 automated tests across supported Python versions.
 - Ruff source/test lint, Bandit medium/high-severity scan, package build, Sphinx warnings-as-errors build, and offscreen PySide6 smoke coverage.
 
 ## [2.4.0] - 2026-05-11

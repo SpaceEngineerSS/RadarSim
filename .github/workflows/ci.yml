@@ -48,6 +48,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[gui,dev]"
       - run: python -m pytest tests/test_ui_smoke.py -q
