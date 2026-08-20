@@ -33,10 +33,10 @@ jobs:
             executable: build/RadarSim.exe
           - os: ubuntu-latest
             platform: Linux_x86_64
-            executable: build/RadarSim.bin
+            executable: build/RadarSim
           - os: macos-latest
             platform: macOS_arm64
-            executable: build/RadarSim.bin
+            executable: build/RadarSim
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
