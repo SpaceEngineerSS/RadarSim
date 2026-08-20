@@ -15,7 +15,7 @@ References:
 """
 
 from enum import Enum
-from typing import Dict, Tuple
+from typing import Dict, Optional
 
 import numba
 import numpy as np
@@ -46,17 +46,13 @@ class SeaState(Enum):
     HIGH = 6  # Very large waves
 
 
-# Terrain parameters: (A, B) for σ0 = A + B*sin(ψ) [dB]
-# Reference: Nathanson, "Radar Design Principles", Table 7.1
-TERRAIN_PARAMETERS: Dict[str, Tuple[float, float]] = {
-    "urban": (-15, 15),
-    "suburban": (-20, 12),
-    "rural": (-25, 10),
-    "forest": (-20, 12),
-    "desert": (-30, 8),
-    "mountains": (-18, 14),
-    "sea_calm": (-40, 5),
-    "sea_rough": (-25, 12),
+LAND_GAMMA_PRIORS_DB: Dict[str, float] = {
+    "urban": -5.0,
+    "suburban": -12.0,
+    "rural": -20.0,
+    "forest": -15.0,
+    "desert": -30.0,
+    "mountains": -8.0,
 }
 
 
@@ -130,11 +126,12 @@ class ClutterModel:
         terrain_type: str = "rural",
         frequency_ghz: float = 10.0,
         polarization: str = "HH",
+        gamma_db: Optional[float] = None,
     ) -> float:
         """
         Ground clutter backscatter coefficient (σ0).
 
-        Uses empirical model: σ0 = A + B*sin(ψ) [dB]
+        Uses the constant-gamma engineering model σ0 = γ sin(ψ).
 
         Args:
             grazing_angle_rad: Grazing angle [rad]
@@ -145,24 +142,71 @@ class ClutterModel:
         Returns:
             σ0 in dB (dB relative to 1 m²/m²)
 
-        Reference: Nathanson, "Radar Design Principles", Table 7.1
+        Terrain-name values are nominal priors, not site calibration. Pass gamma_db from
+        measured clutter whenever quantitative accuracy is required.
         """
-        sin_psi = np.sin(grazing_angle_rad)
+        if not 0.0 < grazing_angle_rad <= np.pi / 2.0:
+            raise ValueError("grazing_angle_rad must be between 0 and pi/2")
+        if frequency_ghz <= 0.0:
+            raise ValueError("frequency_ghz must be positive")
+        if polarization.upper() not in {"HH", "VV"}:
+            raise ValueError("polarization must be 'HH' or 'VV'")
+        if gamma_db is None:
+            try:
+                gamma_db = LAND_GAMMA_PRIORS_DB[terrain_type.lower()]
+            except KeyError as error:
+                raise ValueError(f"unknown terrain type: {terrain_type}") from error
+        return float(gamma_db + 10.0 * np.log10(np.sin(grazing_angle_rad)))
 
-        # Get terrain parameters
-        A, B = TERRAIN_PARAMETERS.get(terrain_type, (-25, 10))
+    @staticmethod
+    def bare_soil_oh1992_sigma0(
+        grazing_angle_rad: float,
+        frequency_ghz: float,
+        relative_permittivity: complex,
+        rms_height_m: float,
+        polarization: str = "HH",
+    ) -> float:
+        """Oh-Sarabandi-Ulaby (1992) bare-soil normalized backscatter."""
+        incidence = np.pi / 2.0 - grazing_angle_rad
+        incidence_deg = float(np.degrees(incidence))
+        if not 10.0 <= incidence_deg <= 70.0:
+            raise ValueError("Oh-1992 model requires 10-70 degree incidence")
+        if not 1.0 <= frequency_ghz <= 10.0:
+            raise ValueError("Oh-1992 measurement domain is L-, C-, and X-band")
+        if relative_permittivity.real <= 1.0 or relative_permittivity.imag > 0.0:
+            raise ValueError("permittivity must use the passive convention eps'-j eps''")
+        if rms_height_m <= 0.0:
+            raise ValueError("rms_height_m must be positive")
 
-        sigma0_db = A + B * sin_psi
+        wavelength = SPEED_OF_LIGHT / (frequency_ghz * 1e9)
+        ks = 2.0 * np.pi / wavelength * rms_height_m
+        if not 0.1 <= ks <= 6.0:
+            raise ValueError("Oh-1992 model requires 0.1 <= k*s <= 6")
 
-        # Frequency adjustment (σ0 increases ~3 dB per octave above X-band)
-        if frequency_ghz > 10:
-            sigma0_db += 3 * np.log2(frequency_ghz / 10)
+        root_eps = np.sqrt(relative_permittivity)
+        gamma_0 = abs((1.0 - root_eps) / (1.0 + root_eps)) ** 2
+        root_term = np.sqrt(relative_permittivity - np.sin(incidence) ** 2)
+        r_h = (np.cos(incidence) - root_term) / (np.cos(incidence) + root_term)
+        r_v = (
+            relative_permittivity * np.cos(incidence) - root_term
+        ) / (relative_permittivity * np.cos(incidence) + root_term)
+        gamma_h = abs(r_h) ** 2
+        gamma_v = abs(r_v) ** 2
 
-        # VV polarization typically 2-4 dB higher than HH
-        if polarization == "VV":
-            sigma0_db += 2.5
-
-        return sigma0_db
+        sqrt_p = 1.0 - (2.0 * incidence / np.pi) ** (1.0 / (3.0 * gamma_0)) * np.exp(
+            -ks
+        )
+        if sqrt_p <= 0.0:
+            raise ValueError("Oh-1992 co-polarization ratio is outside its physical domain")
+        p = sqrt_p**2
+        q = 0.23 * np.sqrt(gamma_0) * (1.0 - np.exp(-ks))
+        g = 0.7 * (1.0 - np.exp(-0.65 * ks**1.8))
+        sigma_vv = g * np.cos(incidence) ** 3 * (gamma_v + gamma_h) / sqrt_p
+        sigma = {"VV": sigma_vv, "HH": p * sigma_vv, "HV": q * sigma_vv}
+        try:
+            return float(10.0 * np.log10(sigma[polarization.upper()]))
+        except KeyError as error:
+            raise ValueError("polarization must be HH, VV, or HV") from error
 
     @staticmethod
     def sea_clutter_sigma0(
@@ -409,9 +453,8 @@ class ClutterModel:
         Returns:
             2D array of clutter power [linear]
         """
-        # Create range and azimuth arrays
+        # Create range array
         ranges = np.linspace(100, max_range_m, range_bins)
-        azimuths = np.linspace(0, 2 * np.pi, azimuth_bins)
 
         # Calculate grazing angles
         clutter_map = np.zeros((range_bins, azimuth_bins))

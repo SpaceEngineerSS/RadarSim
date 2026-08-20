@@ -85,3 +85,55 @@ def test_exported_scenario_round_trips_runtime_parameters(tmp_path):
     assert restored.atmospheric_pressure_hpa == original.atmospheric_pressure_hpa
     assert restored.targets[0].rcs_mean == original.targets[0].rcs_mean
     assert restored.targets[0].has_jammer == original.targets[0].has_jammer
+
+
+def test_ground_surface_parameters_reach_engine_results_and_round_trip(tmp_path):
+    scenario = tmp_path / "ground.yaml"
+    scenario.write_text(
+        """
+scenario:
+  name: Ground model
+  update_rate_hz: 10
+radar:
+  frequency_hz: 5.0e9
+  power_watts: 10000
+  position: {x_m: 0, y_m: 0, z_m: 1000}
+targets:
+  - name: Surface target
+    rcs_m2: 2
+    initial_position: {x_m: 1000, y_m: 0, z_m: 0}
+environment:
+  terrain_type: rural
+  ground_surface:
+    model: oh1992
+    gamma_db: -17.5
+    relative_permittivity_real: 10.0
+    relative_permittivity_loss: 1.2
+    rms_height_m: 0.012
+simulation:
+  enable_atmospheric_loss: false
+  enable_clutter: true
+""",
+        encoding="utf-8",
+    )
+
+    engine = ScenarioLoader(str(scenario)).create_simulation_engine()
+    assert engine.ground_model == "oh1992"
+    assert engine.land_gamma_db == pytest.approx(-17.5)
+    assert engine.ground_relative_permittivity == complex(10.0, -1.2)
+    assert engine.ground_rms_height_m == pytest.approx(0.012)
+
+    result = engine.step()[0]
+    assert result.surface_clutter_model == "oh1992_bare_soil"
+    assert result.surface_sigma0_db is not None
+    assert result.surface_cell_area_m2 > 0.0
+    assert result.surface_clutter_rcs_m2 > 0.0
+    assert result.to_dict()["surface_clutter_model"] == "oh1992_bare_soil"
+
+    exported = tmp_path / "ground_round_trip.yaml"
+    assert export_scenario_to_yaml(engine, str(exported))
+    restored = ScenarioLoader(str(exported)).create_simulation_engine()
+    assert restored.ground_model == engine.ground_model
+    assert restored.land_gamma_db == engine.land_gamma_db
+    assert restored.ground_relative_permittivity == engine.ground_relative_permittivity
+    assert restored.ground_rms_height_m == engine.ground_rms_height_m

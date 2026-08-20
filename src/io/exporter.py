@@ -150,6 +150,17 @@ def _extract_environment(engine) -> Dict[str, Any]:
             "terrain_type": str(getattr(engine, "terrain_type", "rural")),
             "sea_state": int(getattr(engine, "sea_state", 0)),
         },
+        "ground_surface": {
+            "model": str(getattr(engine, "ground_model", "gamma")),
+            "gamma_db": getattr(engine, "land_gamma_db", None),
+            "relative_permittivity_real": float(
+                getattr(engine, "ground_relative_permittivity", complex(8.0, -0.8)).real
+            ),
+            "relative_permittivity_loss": float(
+                -getattr(engine, "ground_relative_permittivity", complex(8.0, -0.8)).imag
+            ),
+            "rms_height_m": float(getattr(engine, "ground_rms_height_m", 0.01)),
+        },
     }
 
     # ECM settings

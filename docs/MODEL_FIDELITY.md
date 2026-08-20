@@ -45,7 +45,8 @@ runtime model:
 - PRF, pulse width, receiver noise bandwidth, noise figure, system temperature and losses;
 - probability of false alarm and number of integrated pulses;
 - atmospheric temperature, pressure and water-vapour density;
-- clutter enablement, terrain class, sea state and rain rate;
+- clutter enablement, terrain class, land model and its calibrated surface parameters, sea
+  state and rain rate;
 - target kinematics, mean RCS, Swerling case and onboard jammer power.
 
 Values omitted by a scenario use documented defaults. A saved run must record both supplied and
@@ -83,15 +84,22 @@ validation, input pedigree, uncertainty characterization, and result robustness.
 - V. Gregers-Hansen and R. Mital, "An Improved Empirical Model for Radar Sea Clutter
   Reflectivity," IEEE Transactions on Aerospace and Electronic Systems, 2012,
   DOI: 10.1109/TAES.2012.6324732.
+- Y. Oh, K. Sarabandi, and F. T. Ulaby, "An Empirical Model and an Inversion Technique for
+  Radar Scattering from Bare Soil Surfaces," IEEE Transactions on Geoscience and Remote
+  Sensing, 1992, DOI: 10.1109/36.134086.
+- J. B. Billingsley, *Low-Angle Radar Land Clutter: Measurements and Empirical Models*,
+  William Andrew Publishing, 2002.
 
 ## Known baseline limitations
 
 - Gaseous attenuation uses the P.676-13 Annex 1 line-by-line equations for a homogeneous
   terrestrial path. Slant paths through height-dependent atmospheric profiles are not yet
   represented.
-- Land-clutter terrain-class coefficients remain an empirical screening model and require
-  site-specific measurement or calibrated soil/vegetation inputs for quantitative use. Sea clutter
-  uses the NRL model within its stated frequency, grazing-angle, and sea-state domain.
+- The constant-gamma land model is a screening model. Terrain-class gamma values are nominal
+  priors; quantitative work requires measured or site-calibrated gamma. Oh-1992 is available for
+  bare soil only within its measured 10-70 degree incidence, L/C/X-band, and 0.1 <= ks <= 6
+  domain. It must not be substituted for a low-grazing Billingsley model. Sea clutter uses the NRL
+  model within its stated frequency, grazing-angle, and sea-state domain.
 - Scenario-level ECM does not yet model receiver saturation or waveform-dependent processing.
 - Pulse-Doppler synthesis starts from a range-compressed representation.
 - SAR/ISAR processing is not yet quantitatively validated.

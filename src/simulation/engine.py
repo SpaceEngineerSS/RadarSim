@@ -28,7 +28,7 @@ from .objects import MotionModel, Radar, SimulationState, Target
 
 # Terrain masking (optional)
 try:
-    from src.physics.terrain import TerrainConfig, TerrainMap
+    from src.physics.terrain import TerrainMap
 
     TERRAIN_AVAILABLE = True
 except ImportError:
@@ -107,6 +107,10 @@ class DetectionResult:
     atmospheric_loss_db: float = 0.0
     rain_attenuation_db: float = 0.0
     surface_clutter_loss_db: float = 0.0
+    surface_sigma0_db: Optional[float] = None
+    surface_cell_area_m2: float = 0.0
+    surface_clutter_rcs_m2: float = 0.0
+    surface_clutter_model: str = "disabled"
     rain_clutter_loss_db: float = 0.0
     jammer_jsr_db: Optional[float] = None
     jammer_loss_db: float = 0.0
@@ -129,6 +133,10 @@ class DetectionResult:
             "atmospheric_loss_db": self.atmospheric_loss_db,
             "rain_attenuation_db": self.rain_attenuation_db,
             "surface_clutter_loss_db": self.surface_clutter_loss_db,
+            "surface_sigma0_db": self.surface_sigma0_db,
+            "surface_cell_area_m2": self.surface_cell_area_m2,
+            "surface_clutter_rcs_m2": self.surface_clutter_rcs_m2,
+            "surface_clutter_model": self.surface_clutter_model,
             "rain_clutter_loss_db": self.rain_clutter_loss_db,
             "jammer_jsr_db": self.jammer_jsr_db,
             "jammer_loss_db": self.jammer_loss_db,
@@ -240,6 +248,10 @@ class SimulationEngine:
         terrain_type: str = "rural",
         sea_state: int = 3,
         rain_rate_mm_hr: float = 0.0,
+        ground_model: str = "gamma",
+        land_gamma_db: Optional[float] = None,
+        ground_relative_permittivity: complex = complex(8.0, -0.8),
+        ground_rms_height_m: float = 0.01,
     ):
         """
         Initialize simulation engine.
@@ -262,6 +274,10 @@ class SimulationEngine:
             terrain_type: Surface classification used by the clutter model
             sea_state: Douglas sea-state index from 0 through 6
             rain_rate_mm_hr: Rain rate [mm/h]
+            ground_model: Land reflectivity model, either gamma or oh1992
+            land_gamma_db: Measured or calibrated gamma value for the gamma model [dB]
+            ground_relative_permittivity: Passive complex soil permittivity eps'-j eps''
+            ground_rms_height_m: RMS soil surface height used by Oh-1992 [m]
         """
         if dt <= 0.0:
             raise ValueError("dt must be greater than zero")
@@ -275,6 +291,13 @@ class SimulationEngine:
             raise ValueError("water-vapor density and rain rate cannot be negative")
         if not 0 <= sea_state <= 6:
             raise ValueError("sea_state must be between 0 and 6")
+        ground_model = ground_model.lower()
+        if ground_model not in {"gamma", "oh1992"}:
+            raise ValueError("ground_model must be 'gamma' or 'oh1992'")
+        if ground_relative_permittivity.real <= 1.0 or ground_relative_permittivity.imag > 0.0:
+            raise ValueError("ground_relative_permittivity must use eps'-j eps''")
+        if ground_rms_height_m <= 0.0:
+            raise ValueError("ground_rms_height_m must be greater than zero")
 
         self.radar = radar
         self.targets = targets or []
@@ -357,6 +380,10 @@ class SimulationEngine:
         self.terrain_type = terrain_type
         self.sea_state = sea_state
         self.rain_rate_mm_hr = rain_rate_mm_hr
+        self.ground_model = ground_model
+        self.land_gamma_db = land_gamma_db
+        self.ground_relative_permittivity = ground_relative_permittivity
+        self.ground_rms_height_m = ground_rms_height_m
         if enable_clutter and (
             "sea" in terrain_type.lower() or "water" in terrain_type.lower()
         ):
@@ -482,7 +509,6 @@ class SimulationEngine:
             if az_diff > self.radar.beamwidth_rad * 2.0:
                 continue  # Target not illuminated by beam
 
-            rcs = target.get_rcs(self.radar.position)
             # Amplitude from radar equation (simplified)
             snr_lin = max(
                 10 ** (self.state.snr_values.get(target.target_id, 0.0) / 10.0),
@@ -800,69 +826,88 @@ class SimulationEngine:
                 )
 
             clutter_snr_loss_db = 0.0
+            surface_sigma0_db = None
+            surface_cell_area_m2 = 0.0
+            surface_clutter_rcs_m2 = 0.0
+            surface_clutter_model = "disabled"
             if self.clutter_enabled and CLUTTER_AVAILABLE and geom["range_m"] > 100:
-                try:
-                    radar_height_m = max(float(self.radar.position[2]), 0.0)
-                    grazing_angle = np.arcsin(
-                        np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)
+                radar_height_m = max(float(self.radar.position[2]), 0.0)
+                geometric_grazing = np.arcsin(
+                    np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)
+                )
+                freq_ghz = self.radar.frequency_hz / 1e9
+                is_water = (
+                    "sea" in self.terrain_type.lower()
+                    or "water" in self.terrain_type.lower()
+                )
+
+                if is_water:
+                    model_grazing = np.clip(
+                        geometric_grazing, np.radians(0.1), np.radians(60.0)
                     )
-
-                    # Get clutter backscatter coefficient
-                    freq_ghz = self.radar.frequency_hz / 1e9
-
-                    if (
-                        "sea" in self.terrain_type.lower()
-                        or "water" in self.terrain_type.lower()
-                    ):
-                        nrl_grazing = np.clip(
-                            grazing_angle, np.radians(0.1), np.radians(60.0)
-                        )
-                        sigma_h_db = ClutterModel.sea_clutter_sigma0(
-                            nrl_grazing,
-                            sea_state=self.sea_state,
-                            frequency_ghz=freq_ghz,
-                            polarization="HH",
-                        )
-                        sigma_v_db = ClutterModel.sea_clutter_sigma0(
-                            nrl_grazing,
-                            sea_state=self.sea_state,
-                            frequency_ghz=freq_ghz,
-                            polarization="VV",
-                        )
-                        tilt = np.radians(self.radar.polarization_tilt_deg)
-                        sigma0_linear = (
-                            10.0 ** (sigma_h_db / 10.0) * np.cos(tilt) ** 2
-                            + 10.0 ** (sigma_v_db / 10.0) * np.sin(tilt) ** 2
-                        )
-                        sigma0_db = 10.0 * np.log10(sigma0_linear)
-                    else:
-                        grazing_angle = max(grazing_angle, np.radians(0.1))
-                        sigma0_db = ClutterModel.ground_clutter_sigma0(
-                            grazing_angle,
-                            terrain_type=self.terrain_type,
-                            frequency_ghz=freq_ghz,
-                        )
-
-                    cell_area = ClutterModel.surface_resolution_cell_area(
-                        geom["range_m"],
-                        self.radar.pulse_width_s,
-                        self.radar.beamwidth_rad,
-                        self.radar.beamwidth_el_rad,
-                        grazing_angle,
+                    sigma_h_db = ClutterModel.sea_clutter_sigma0(
+                        model_grazing,
+                        sea_state=self.sea_state,
+                        frequency_ghz=freq_ghz,
+                        polarization="HH",
                     )
+                    sigma_v_db = ClutterModel.sea_clutter_sigma0(
+                        model_grazing,
+                        sea_state=self.sea_state,
+                        frequency_ghz=freq_ghz,
+                        polarization="VV",
+                    )
+                    surface_clutter_model = "nrl_five_parameter"
+                elif self.ground_model == "oh1992":
+                    model_grazing = geometric_grazing
+                    sigma_h_db = ClutterModel.bare_soil_oh1992_sigma0(
+                        model_grazing,
+                        freq_ghz,
+                        self.ground_relative_permittivity,
+                        self.ground_rms_height_m,
+                        "HH",
+                    )
+                    sigma_v_db = ClutterModel.bare_soil_oh1992_sigma0(
+                        model_grazing,
+                        freq_ghz,
+                        self.ground_relative_permittivity,
+                        self.ground_rms_height_m,
+                        "VV",
+                    )
+                    surface_clutter_model = "oh1992_bare_soil"
+                else:
+                    model_grazing = max(geometric_grazing, np.radians(0.1))
+                    sigma_h_db = ClutterModel.ground_clutter_sigma0(
+                        model_grazing,
+                        terrain_type=self.terrain_type,
+                        frequency_ghz=freq_ghz,
+                        polarization="HH",
+                        gamma_db=self.land_gamma_db,
+                    )
+                    sigma_v_db = sigma_h_db
+                    surface_clutter_model = "constant_gamma"
 
-                    # Clutter RCS
-                    sigma0_linear = 10 ** (sigma0_db / 10)
-                    clutter_rcs = sigma0_linear * cell_area
+                tilt = np.radians(self.radar.polarization_tilt_deg)
+                sigma0_linear = (
+                    10.0 ** (sigma_h_db / 10.0) * np.cos(tilt) ** 2
+                    + 10.0 ** (sigma_v_db / 10.0) * np.sin(tilt) ** 2
+                )
+                surface_sigma0_db = float(10.0 * np.log10(sigma0_linear))
+                surface_cell_area_m2 = ClutterModel.surface_resolution_cell_area(
+                    geom["range_m"],
+                    self.radar.pulse_width_s,
+                    self.radar.beamwidth_rad,
+                    self.radar.beamwidth_el_rad,
+                    model_grazing,
+                )
+                surface_clutter_rcs_m2 = sigma0_linear * surface_cell_area_m2
 
-                    if clutter_rcs > 0.0:
-                        thermal_snr_db = snr_db
-                        snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
-                            thermal_snr_db, rcs, clutter_rcs
-                        )
-                        clutter_snr_loss_db = thermal_snr_db - snr_db
-                except ValueError:
-                    raise
+                if surface_clutter_rcs_m2 > 0.0:
+                    thermal_snr_db = snr_db
+                    snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
+                        thermal_snr_db, rcs, surface_clutter_rcs_m2
+                    )
+                    clutter_snr_loss_db = thermal_snr_db - snr_db
 
             jammer_snr_loss_db = 0.0
             jsr_db = None
@@ -954,12 +999,10 @@ class SimulationEngine:
             # ═══ PHASE 19: MTI FILTER ═══
             # Moving Target Indication: Reject slow-moving targets (clutter)
             # Reference: Richards, "Fundamentals of Radar Signal Processing"
-            mti_rejected = False
             if self.mti_enabled and is_detected:
                 radial_vel = abs(geom["radial_velocity_mps"])
                 if radial_vel < self.mti_threshold_mps:
                     is_detected = False
-                    mti_rejected = True
                     # Target rejected by MTI filter (appears as clutter)
 
             # Generate measurements (with noise if detected)
@@ -1034,6 +1077,10 @@ class SimulationEngine:
                 atmospheric_loss_db=atm_loss_db,
                 rain_attenuation_db=rain_loss_db,
                 surface_clutter_loss_db=clutter_snr_loss_db,
+                surface_sigma0_db=surface_sigma0_db,
+                surface_cell_area_m2=surface_cell_area_m2,
+                surface_clutter_rcs_m2=surface_clutter_rcs_m2,
+                surface_clutter_model=surface_clutter_model,
                 rain_clutter_loss_db=rain_clutter_loss_db,
                 jammer_jsr_db=jsr_db,
                 jammer_loss_db=jammer_snr_loss_db,

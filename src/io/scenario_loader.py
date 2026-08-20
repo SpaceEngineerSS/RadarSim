@@ -91,6 +91,11 @@ class EnvironmentConfig:
     terrain_type: str = "rural"
     sea_state: int = 0
     rain_rate_mm_hr: float = 0.0
+    ground_model: str = "gamma"
+    land_gamma_db: Optional[float] = None
+    ground_relative_permittivity_real: float = 8.0
+    ground_relative_permittivity_loss: float = 0.8
+    ground_rms_height_m: float = 0.01
 
     def __post_init__(self) -> None:
         if self.pressure_hpa <= 0.0:
@@ -99,6 +104,14 @@ class EnvironmentConfig:
             raise ValueError("Water-vapor density and rain rate cannot be negative")
         if not 0 <= self.sea_state <= 6:
             raise ValueError("sea_state must be between 0 and 6")
+        if self.ground_model not in {"gamma", "oh1992"}:
+            raise ValueError("ground_model must be 'gamma' or 'oh1992'")
+        if self.ground_relative_permittivity_real <= 1.0:
+            raise ValueError("ground_relative_permittivity_real must be greater than one")
+        if self.ground_relative_permittivity_loss < 0.0:
+            raise ValueError("ground_relative_permittivity_loss cannot be negative")
+        if self.ground_rms_height_m <= 0.0:
+            raise ValueError("ground_rms_height_m must be greater than zero")
 
 
 @dataclass
@@ -287,14 +300,26 @@ class ScenarioLoader:
     def _parse_environment(self) -> EnvironmentConfig:
         """Parse environment configuration."""
         env = self.data.get("environment", {})
+        clutter = env.get("clutter", {})
+        ground = env.get("ground_surface", {})
+        gamma_value = ground.get("gamma_db")
 
         return EnvironmentConfig(
             temperature_c=float(env.get("temperature_c", 15.0)),
             pressure_hpa=float(env.get("pressure_hpa", 1013.25)),
             water_vapor_gpm3=float(env.get("water_vapor_gpm3", 7.5)),
-            terrain_type=str(env.get("terrain_type", "rural")),
-            sea_state=int(env.get("sea_state", 0)),
+            terrain_type=str(env.get("terrain_type", clutter.get("terrain_type", "rural"))),
+            sea_state=int(env.get("sea_state", clutter.get("sea_state", 0))),
             rain_rate_mm_hr=float(env.get("rain_rate_mm_hr", 0.0)),
+            ground_model=str(ground.get("model", "gamma")).lower(),
+            land_gamma_db=float(gamma_value) if gamma_value is not None else None,
+            ground_relative_permittivity_real=float(
+                ground.get("relative_permittivity_real", 8.0)
+            ),
+            ground_relative_permittivity_loss=float(
+                ground.get("relative_permittivity_loss", 0.8)
+            ),
+            ground_rms_height_m=float(ground.get("rms_height_m", 0.01)),
         )
 
     def get_config(self) -> Optional[SimulationConfig]:
@@ -411,6 +436,13 @@ class ScenarioLoader:
             terrain_type=self._config.environment.terrain_type,
             sea_state=self._config.environment.sea_state,
             rain_rate_mm_hr=self._config.environment.rain_rate_mm_hr,
+            ground_model=self._config.environment.ground_model,
+            land_gamma_db=self._config.environment.land_gamma_db,
+            ground_relative_permittivity=complex(
+                self._config.environment.ground_relative_permittivity_real,
+                -self._config.environment.ground_relative_permittivity_loss,
+            ),
+            ground_rms_height_m=self._config.environment.ground_rms_height_m,
         )
 
         return engine

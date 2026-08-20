@@ -230,15 +230,39 @@ $$ V_{blind} = n \cdot \frac{\lambda \cdot PRF}{2} $$
 
 ## Environmental Clutter
 
-RadarSim models clutter as a statistical process that degrades the effective SNR: $SNR_{eff} = SNR - CNR$.
+Surface clutter is formed from normalized backscatter and the common range-antenna resolution
+cell:
 
-### Clutter Models
+$$\sigma_c = \sigma^0 A_c$$
 
-| Type | Distribution | Typical $\sigma^0$ |
-|------|--------------|-------------------|
-| **Ground** | Weibull | -15 to -25 dB |
-| **Sea** | GIT Model (Douglas Sea State) | -20 to -45 dB |
-| **Rain** | Marshall-Palmer | Variable ($Z=200R^{1.6}$) |
+Thermal noise and clutter are combined as powers rather than subtracting CNR in decibels:
+
+$$\frac{1}{\mathrm{SINR}} = \frac{1}{\mathrm{SNR}} + \frac{\sigma_c}{\sigma_t}$$
+
+The result record exposes the selected model, $\sigma^0$, cell area, clutter RCS, and resulting
+SINR loss.
+
+### Land clutter
+
+The default constant-gamma screening model is
+
+$$\sigma^0 = \gamma\sin\psi$$
+
+where $\psi$ is grazing angle. Terrain-name gamma values are nominal priors and do not encode
+site moisture, season, cultivation, frequency, or spatial resolution. A measured `gamma_db`
+should be supplied for quantitative studies.
+
+The optional Oh-Sarabandi-Ulaby 1992 model computes HH, VV, and HV normalized backscatter from
+complex relative permittivity and RMS surface height. Its enforced domain is bare soil, L/C/X
+band, 10-70 degree incidence, and $0.1 \le ks \le 6$. It is not used below that incidence-domain
+boundary and is not presented as a low-angle land-clutter model.
+
+### Sea and rain clutter
+
+Sea reflectivity uses the NRL five-parameter model for HH/VV polarization, 0.5-35 GHz,
+0.1-60 degree grazing, Douglas sea states 0-6. Rain volume reflectivity uses the
+Marshall-Palmer $Z=200R^{1.6}$ relationship. These amplitude models are separate from
+ITU-R P.838 path attenuation.
 
 **Implementation:** `src/physics/clutter.py`
 
@@ -259,6 +283,13 @@ RadarSim models clutter as a statistical process that degrades the effective SNR
 
 4. **Blake, L.V.** (1980). *Radar Range-Performance Analysis*. Artech House.
    - 4/3 Earth model origins
+
+5. **Oh, Y., Sarabandi, K., & Ulaby, F.T.** (1992). "An Empirical Model and an
+   Inversion Technique for Radar Scattering from Bare Soil Surfaces." IEEE TGRS.
+   DOI: 10.1109/36.134086.
+
+6. **Gregers-Hansen, V., & Mital, R.** (2012). "An Improved Empirical Model for Radar
+   Sea Clutter Reflectivity." IEEE TAES. DOI: 10.1109/TAES.2012.6324732.
 
 ---
 

@@ -4,6 +4,61 @@ import pytest
 from src.physics.clutter import ClutterModel
 
 
+def test_constant_gamma_ground_reflectivity_uses_sine_grazing_law():
+    sigma0_db = ClutterModel.ground_clutter_sigma0(
+        np.radians(30.0), gamma_db=-20.0
+    )
+    assert sigma0_db == pytest.approx(-23.010299956639813)
+
+
+def test_constant_gamma_ground_reflectivity_increases_with_grazing_angle():
+    values = [
+        ClutterModel.ground_clutter_sigma0(np.radians(angle), terrain_type="rural")
+        for angle in (0.1, 1.0, 10.0, 45.0)
+    ]
+    assert np.all(np.diff(values) > 0.0)
+
+
+def test_constant_gamma_rejects_unknown_uncalibrated_terrain():
+    with pytest.raises(ValueError, match="unknown terrain type"):
+        ClutterModel.ground_clutter_sigma0(np.radians(5.0), "tundra")
+
+
+@pytest.mark.parametrize(
+    ("polarization", "expected_db"),
+    (
+        ("HH", -14.152949283094422),
+        ("VV", -12.747674016980767),
+        ("HV", -24.20084898920081),
+    ),
+)
+def test_oh1992_bare_soil_reference_case(polarization, expected_db):
+    sigma0_db = ClutterModel.bare_soil_oh1992_sigma0(
+        np.radians(40.0),
+        5.0,
+        complex(8.0, -0.8),
+        0.01,
+        polarization,
+    )
+    assert sigma0_db == pytest.approx(expected_db, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        (np.radians(19.9), 5.0, complex(8.0, -0.8), 0.01, "HH"),
+        (np.radians(80.1), 5.0, complex(8.0, -0.8), 0.01, "HH"),
+        (np.radians(40.0), 0.9, complex(8.0, -0.8), 0.01, "HH"),
+        (np.radians(40.0), 5.0, complex(0.8, -0.1), 0.01, "HH"),
+        (np.radians(40.0), 5.0, complex(8.0, 0.8), 0.01, "HH"),
+        (np.radians(40.0), 5.0, complex(8.0, -0.8), 0.0005, "HH"),
+    ),
+)
+def test_oh1992_rejects_inputs_outside_measurement_domain(args):
+    with pytest.raises(ValueError):
+        ClutterModel.bare_soil_oh1992_sigma0(*args)
+
+
 @pytest.mark.parametrize(
     ("grazing_deg", "sea_state", "frequency_ghz", "polarization", "expected_db"),
     (
