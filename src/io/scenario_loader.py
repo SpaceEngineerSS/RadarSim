@@ -40,7 +40,29 @@ class RadarConfig:
     prf_hz: float
     pulse_width_s: float
     noise_figure_db: float
+    receiver_bandwidth_hz: float
+    system_temperature_k: float
+    system_losses_db: float
+    polarization_tilt_deg: float
     position: np.ndarray
+
+    def __post_init__(self) -> None:
+        positive = {
+            "frequency_hz": self.frequency_hz,
+            "power_watts": self.power_watts,
+            "antenna_gain_db": self.antenna_gain_db,
+            "beamwidth_az_deg": self.beamwidth_az_deg,
+            "beamwidth_el_deg": self.beamwidth_el_deg,
+            "prf_hz": self.prf_hz,
+            "pulse_width_s": self.pulse_width_s,
+            "receiver_bandwidth_hz": self.receiver_bandwidth_hz,
+            "system_temperature_k": self.system_temperature_k,
+        }
+        invalid = [name for name, value in positive.items() if value <= 0.0]
+        if invalid:
+            raise ValueError(f"Radar parameters must be positive: {', '.join(invalid)}")
+        if self.noise_figure_db < 0.0 or self.system_losses_db < 0.0:
+            raise ValueError("Noise figure and system losses cannot be negative")
 
 
 @dataclass
@@ -56,6 +78,7 @@ class TargetConfig:
     has_ecm: bool = False
     ecm_type: str = ""
     ecm_power_watts: float = 0.0
+    ecm_bandwidth_hz: float = 100e6
 
 
 @dataclass
@@ -65,6 +88,17 @@ class EnvironmentConfig:
     temperature_c: float = 15.0
     pressure_hpa: float = 1013.25
     water_vapor_gpm3: float = 7.5
+    terrain_type: str = "rural"
+    sea_state: int = 0
+    rain_rate_mm_hr: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.pressure_hpa <= 0.0:
+            raise ValueError("pressure_hpa must be greater than zero")
+        if self.water_vapor_gpm3 < 0.0 or self.rain_rate_mm_hr < 0.0:
+            raise ValueError("Water-vapor density and rain rate cannot be negative")
+        if not 0 <= self.sea_state <= 6:
+            raise ValueError("sea_state must be between 0 and 6")
 
 
 @dataclass
@@ -80,7 +114,16 @@ class SimulationConfig:
     environment: EnvironmentConfig
     enable_atmospheric_loss: bool = True
     enable_clutter: bool = False
-    detection_threshold_db: float = 13.0
+    probability_false_alarm: float = 1e-6
+    pulses_integrated: int = 1
+
+    def __post_init__(self) -> None:
+        if self.duration_s <= 0.0 or self.update_rate_hz <= 0.0:
+            raise ValueError("Scenario duration and update rate must be positive")
+        if not 0.0 < self.probability_false_alarm < 1.0:
+            raise ValueError("probability_false_alarm must be between 0 and 1")
+        if self.pulses_integrated < 1:
+            raise ValueError("pulses_integrated must be at least 1")
 
 
 class ScenarioLoader:
@@ -166,9 +209,8 @@ class ScenarioLoader:
             environment=environment,
             enable_atmospheric_loss=sim_params.get("enable_atmospheric_loss", True),
             enable_clutter=sim_params.get("enable_clutter", False),
-            detection_threshold_db=float(
-                sim_params.get("pfa", 1e-6)
-            ),  # Will be converted
+            probability_false_alarm=float(sim_params.get("pfa", 1e-6)),
+            pulses_integrated=int(sim_params.get("pulses_integrated", 1)),
         )
 
     def _parse_radar(self) -> RadarConfig:
@@ -188,6 +230,14 @@ class ScenarioLoader:
             prf_hz=float(radar.get("prf_hz", 1000)),
             pulse_width_s=float(radar.get("pulse_width_s", 1e-6)),
             noise_figure_db=float(receiver.get("noise_figure_db", 4.0)),
+            receiver_bandwidth_hz=float(
+                receiver.get(
+                    "bandwidth_hz", 1.0 / float(radar.get("pulse_width_s", 1e-6))
+                )
+            ),
+            system_temperature_k=float(receiver.get("system_temperature_k", 290.0)),
+            system_losses_db=float(radar.get("system_losses_db", 4.0)),
+            polarization_tilt_deg=float(antenna.get("polarization_tilt_deg", 0.0)),
             position=np.array(
                 [
                     float(pos.get("x_m", 0)),
@@ -228,6 +278,7 @@ class ScenarioLoader:
                     has_ecm=t.get("has_ecm", False),
                     ecm_type=t.get("ecm_type", ""),
                     ecm_power_watts=float(t.get("ecm_power_watts", 0)),
+                    ecm_bandwidth_hz=float(t.get("ecm_bandwidth_hz", 100e6)),
                 )
             )
 
@@ -241,6 +292,9 @@ class ScenarioLoader:
             temperature_c=float(env.get("temperature_c", 15.0)),
             pressure_hpa=float(env.get("pressure_hpa", 1013.25)),
             water_vapor_gpm3=float(env.get("water_vapor_gpm3", 7.5)),
+            terrain_type=str(env.get("terrain_type", "rural")),
+            sea_state=int(env.get("sea_state", 0)),
+            rain_rate_mm_hr=float(env.get("rain_rate_mm_hr", 0.0)),
         )
 
     def get_config(self) -> Optional[SimulationConfig]:
@@ -297,7 +351,15 @@ class ScenarioLoader:
             power_watts=self._config.radar.power_watts,
             antenna_gain_db=self._config.radar.antenna_gain_db,
             beamwidth_deg=self._config.radar.beamwidth_az_deg,
-            scan_rate_rpm=6.0,  # Default scan rate
+            beamwidth_el_deg=self._config.radar.beamwidth_el_deg,
+            scan_rate_rpm=6.0,
+            prf_hz=self._config.radar.prf_hz,
+            pulse_width_s=self._config.radar.pulse_width_s,
+            receiver_bandwidth_hz=self._config.radar.receiver_bandwidth_hz,
+            noise_figure_db=self._config.radar.noise_figure_db,
+            system_temperature_k=self._config.radar.system_temperature_k,
+            system_losses_db=self._config.radar.system_losses_db,
+            polarization_tilt_deg=self._config.radar.polarization_tilt_deg,
         )
 
         # Create targets
@@ -327,6 +389,10 @@ class ScenarioLoader:
                 target_type=t_config.target_type,
                 swerling_model=swerling,
                 motion_model=motion,
+                has_jammer=t_config.has_ecm,
+                jammer_power_watts=t_config.ecm_power_watts,
+                jammer_bandwidth_hz=t_config.ecm_bandwidth_hz,
+                ecm_type=t_config.ecm_type or "noise_barrage",
             )
             targets.append(target)
 
@@ -336,7 +402,15 @@ class ScenarioLoader:
             targets=targets,
             dt=1.0 / self._config.update_rate_hz,
             enable_atmospheric=self._config.enable_atmospheric_loss,
-            detection_threshold_db=13.0,  # Standard threshold
+            probability_false_alarm=self._config.probability_false_alarm,
+            pulses_integrated=self._config.pulses_integrated,
+            atmospheric_temperature_c=self._config.environment.temperature_c,
+            atmospheric_pressure_hpa=self._config.environment.pressure_hpa,
+            water_vapor_density_g_m3=self._config.environment.water_vapor_gpm3,
+            enable_clutter=self._config.enable_clutter,
+            terrain_type=self._config.environment.terrain_type,
+            sea_state=self._config.environment.sea_state,
+            rain_rate_mm_hr=self._config.environment.rain_rate_mm_hr,
         )
 
         return engine

@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from src.physics.atmospheric import ITU_R_P676
+from src.physics.ecm import ECMSimulator
+from src.physics.metrics import calculate_pd_swerling
 from src.physics.radar_equation import RadarParameters, calculate_snr
+from src.physics.rain import ITU_R_P838
 from src.physics.rcs import SwerlingModel
 
 from .objects import MotionModel, Radar, SimulationState, Target
@@ -101,6 +104,12 @@ class DetectionResult:
     # AI Classification (Phase 25)
     predicted_class: str = "Unknown"
     confidence: float = 0.0
+    atmospheric_loss_db: float = 0.0
+    rain_attenuation_db: float = 0.0
+    surface_clutter_loss_db: float = 0.0
+    rain_clutter_loss_db: float = 0.0
+    jammer_jsr_db: Optional[float] = None
+    jammer_loss_db: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -117,6 +126,12 @@ class DetectionResult:
             "pd": self.pd,
             "predicted_class": self.predicted_class,
             "confidence": self.confidence,
+            "atmospheric_loss_db": self.atmospheric_loss_db,
+            "rain_attenuation_db": self.rain_attenuation_db,
+            "surface_clutter_loss_db": self.surface_clutter_loss_db,
+            "rain_clutter_loss_db": self.rain_clutter_loss_db,
+            "jammer_jsr_db": self.jammer_jsr_db,
+            "jammer_loss_db": self.jammer_loss_db,
         }
 
 
@@ -216,6 +231,15 @@ class SimulationEngine:
         range_noise_std_m: float = 50.0,
         angle_noise_std_rad: float = 0.001,
         terrain: "TerrainMap" = None,
+        probability_false_alarm: float = 1e-6,
+        pulses_integrated: int = 1,
+        atmospheric_temperature_c: float = 15.0,
+        atmospheric_pressure_hpa: float = 1013.25,
+        water_vapor_density_g_m3: float = 7.5,
+        enable_clutter: bool = False,
+        terrain_type: str = "rural",
+        sea_state: int = 3,
+        rain_rate_mm_hr: float = 0.0,
     ):
         """
         Initialize simulation engine.
@@ -225,11 +249,33 @@ class SimulationEngine:
             targets: List of Target objects
             dt: Time step [s]
             enable_atmospheric: Enable ITU-R atmospheric loss
-            detection_threshold_db: SNR threshold for detection
+            detection_threshold_db: Legacy nominal SNR threshold retained for compatibility
             range_noise_std_m: Range measurement noise [m]
             angle_noise_std_rad: Angle measurement noise [rad]
             terrain: Optional TerrainMap for LOS calculations
+            probability_false_alarm: Probability of false alarm per resolution cell
+            pulses_integrated: Pulses integrated by the square-law detector
+            atmospheric_temperature_c: Path temperature [degrees Celsius]
+            atmospheric_pressure_hpa: Path pressure [hPa]
+            water_vapor_density_g_m3: Water-vapor density [g/m^3]
+            enable_clutter: Enable surface and volume clutter losses
+            terrain_type: Surface classification used by the clutter model
+            sea_state: Douglas sea-state index from 0 through 6
+            rain_rate_mm_hr: Rain rate [mm/h]
         """
+        if dt <= 0.0:
+            raise ValueError("dt must be greater than zero")
+        if not 0.0 < probability_false_alarm < 1.0:
+            raise ValueError("probability_false_alarm must be between 0 and 1")
+        if pulses_integrated < 1:
+            raise ValueError("pulses_integrated must be at least 1")
+        if atmospheric_pressure_hpa <= 0.0:
+            raise ValueError("atmospheric_pressure_hpa must be greater than zero")
+        if water_vapor_density_g_m3 < 0.0 or rain_rate_mm_hr < 0.0:
+            raise ValueError("water-vapor density and rain rate cannot be negative")
+        if not 0 <= sea_state <= 6:
+            raise ValueError("sea_state must be between 0 and 6")
+
         self.radar = radar
         self.targets = targets or []
         self.dt = dt
@@ -237,6 +283,11 @@ class SimulationEngine:
         self.detection_threshold_db = detection_threshold_db
         self.range_noise_std = range_noise_std_m
         self.angle_noise_std = angle_noise_std_rad
+        self.probability_false_alarm = probability_false_alarm
+        self.pulses_integrated = int(pulses_integrated)
+        self.atmospheric_temperature_c = atmospheric_temperature_c
+        self.atmospheric_pressure_hpa = atmospheric_pressure_hpa
+        self.water_vapor_density_g_m3 = water_vapor_density_g_m3
 
         # Terrain for line-of-sight calculations
         self.terrain = terrain
@@ -257,8 +308,13 @@ class SimulationEngine:
             power_transmitted=radar.power_watts,
             antenna_gain_tx=radar.antenna_gain_db,
             antenna_gain_rx=radar.antenna_gain_db,
-            noise_figure=4.0,
-            pulse_width=1e-6,
+            system_losses_tx=radar.system_losses_db / 2.0,
+            system_losses_rx=radar.system_losses_db / 2.0,
+            noise_figure=radar.noise_figure_db,
+            temperature=radar.system_temperature_k,
+            pulse_width=radar.pulse_width_s,
+            prf=radar.prf_hz,
+            noise_bandwidth=radar.receiver_bandwidth_hz,
         )
 
         # ECM false targets (chaff, DRFM ghosts, decoys)
@@ -272,6 +328,7 @@ class SimulationEngine:
         self.ecm_active = False
         self.ecm_type = "noise"  # 'noise', 'chaff', 'drfm', 'decoy'
         self.ecm_activation_time = 0.0  # When ECM was activated (for RGPO drift)
+        self._ecm_simulator = ECMSimulator(radar_wavelength=radar.wavelength)
 
         # ═══ TRACK-WHILE-SCAN (TWS) ═══
         if TRACKING_AVAILABLE:
@@ -296,10 +353,18 @@ class SimulationEngine:
 
         # ═══ PHASE 19: CLUTTER, MTI & ECCM STATE ═══
         # Clutter: Adds environmental noise (ground/sea clutter)
-        self.clutter_enabled = False
-        self.terrain_type = "rural"  # 'urban', 'suburban', 'rural', 'forest', 'desert', 'mountains', 'sea'
-        self.sea_state = 3  # Douglas sea state (0-6)
-        self.rain_rate_mm_hr = 0.0  # For volume clutter (rain/snow)
+        self.clutter_enabled = enable_clutter
+        self.terrain_type = terrain_type
+        self.sea_state = sea_state
+        self.rain_rate_mm_hr = rain_rate_mm_hr
+        if enable_clutter and (
+            "sea" in terrain_type.lower() or "water" in terrain_type.lower()
+        ):
+            frequency_ghz = radar.frequency_hz / 1e9
+            if not 0.5 <= frequency_ghz <= 35.0:
+                raise ValueError(
+                    "NRL sea clutter model requires radar frequency from 0.5 to 35 GHz"
+                )
 
         # MTI: Moving Target Indication - filters slow/stationary targets
         self.mti_enabled = False
@@ -324,7 +389,7 @@ class SimulationEngine:
         self._frame_count = 0
 
         # Store pulse width for rain volume clutter calculation
-        self._pulse_width_s = 1e-6  # 1 microsecond default
+        self._pulse_width_s = radar.pulse_width_s
 
         # ═══ PHASE 26: PULSE-DOPPLER PROCESSING ═══
         self.pulse_doppler_enabled = False
@@ -332,7 +397,7 @@ class SimulationEngine:
         self._rd_map: Optional["RangeDopplerMap"] = None
         self._pd_mti_order = 0  # MTI canceller order
         self._pd_n_pulses = 64  # Coherent pulses per CPI
-        self._pd_prf_hz = 1000.0  # Pulse repetition frequency
+        self._pd_prf_hz = radar.prf_hz
 
     def add_target(self, target: Target) -> None:
         """Add a target to the simulation."""
@@ -452,12 +517,7 @@ class SimulationEngine:
             self.ecm_activation_time = self.current_time
 
         self.ecm_active = active
-        self.ecm_type = (
-            ecm_type.lower()
-            .replace(" ", "_")
-            .replace("_barrage", "")
-            .replace("_spot", "")
-        )
+        self.ecm_type = ecm_type.lower().replace(" ", "_")
 
         # Clear false targets when ECM is deactivated
         if not active:
@@ -698,7 +758,12 @@ class SimulationEngine:
                 range_km = geom["range_m"] / 1000
                 if range_km > 0.1:
                     atm_loss_db = ITU_R_P676.total_attenuation(
-                        range_km, freq_ghz, two_way=True
+                        range_km,
+                        freq_ghz,
+                        temperature_c=self.atmospheric_temperature_c,
+                        pressure_hpa=self.atmospheric_pressure_hpa,
+                        water_vapor_density=self.water_vapor_density_g_m3,
+                        two_way=True,
                     )
 
             # ═══ TERRAIN MASKING CHECK (LOS) ═══
@@ -734,120 +799,151 @@ class SimulationEngine:
                     atmospheric_loss_db=atm_loss_db,
                 )
 
-            # ═══ PHASE 19: CLUTTER DEGRADATION ═══
-            # Clutter adds to noise floor, degrading SNR
-            # Reference: Skolnik, "Radar Handbook", Chapter 5
             clutter_snr_loss_db = 0.0
             if self.clutter_enabled and CLUTTER_AVAILABLE and geom["range_m"] > 100:
                 try:
-                    # Calculate grazing angle (simplified)
-                    grazing_angle = (
-                        abs(geom["elevation_rad"])
-                        if abs(geom["elevation_rad"]) > 0.01
-                        else 0.05
+                    radar_height_m = max(float(self.radar.position[2]), 0.0)
+                    grazing_angle = np.arcsin(
+                        np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)
                     )
 
                     # Get clutter backscatter coefficient
                     freq_ghz = self.radar.frequency_hz / 1e9
 
-                    # ═══ PHASE 25: SEA CLUTTER AUTOMATION ═══
-                    # Use GIT model for sea, Nathanson model for land
                     if (
                         "sea" in self.terrain_type.lower()
                         or "water" in self.terrain_type.lower()
                     ):
-                        sigma0_db = ClutterModel.sea_clutter_sigma0(
-                            grazing_angle,
+                        nrl_grazing = np.clip(
+                            grazing_angle, np.radians(0.1), np.radians(60.0)
+                        )
+                        sigma_h_db = ClutterModel.sea_clutter_sigma0(
+                            nrl_grazing,
                             sea_state=self.sea_state,
                             frequency_ghz=freq_ghz,
+                            polarization="HH",
                         )
+                        sigma_v_db = ClutterModel.sea_clutter_sigma0(
+                            nrl_grazing,
+                            sea_state=self.sea_state,
+                            frequency_ghz=freq_ghz,
+                            polarization="VV",
+                        )
+                        tilt = np.radians(self.radar.polarization_tilt_deg)
+                        sigma0_linear = (
+                            10.0 ** (sigma_h_db / 10.0) * np.cos(tilt) ** 2
+                            + 10.0 ** (sigma_v_db / 10.0) * np.sin(tilt) ** 2
+                        )
+                        sigma0_db = 10.0 * np.log10(sigma0_linear)
                     else:
+                        grazing_angle = max(grazing_angle, np.radians(0.1))
                         sigma0_db = ClutterModel.ground_clutter_sigma0(
                             grazing_angle,
                             terrain_type=self.terrain_type,
                             frequency_ghz=freq_ghz,
                         )
 
-                    # Resolution cell area (approximate)
-                    range_resolution = 150  # meters (typical)
-                    cross_range = geom["range_m"] * np.radians(self.radar.beamwidth_deg)
-                    cell_area = range_resolution * cross_range
+                    cell_area = ClutterModel.surface_resolution_cell_area(
+                        geom["range_m"],
+                        self.radar.pulse_width_s,
+                        self.radar.beamwidth_rad,
+                        self.radar.beamwidth_el_rad,
+                        grazing_angle,
+                    )
 
                     # Clutter RCS
                     sigma0_linear = 10 ** (sigma0_db / 10)
                     clutter_rcs = sigma0_linear * cell_area
 
-                    # Signal-to-Clutter Ratio (SCR) loss
-                    # SNR_eff = SNR * (1 / (1 + C/N))
-                    if clutter_rcs > 0.01:
-                        clutter_snr_loss_db = 10 * np.log10(
-                            1 + clutter_rcs / (rcs + 0.01)
+                    if clutter_rcs > 0.0:
+                        thermal_snr_db = snr_db
+                        snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
+                            thermal_snr_db, rcs, clutter_rcs
                         )
-                        snr_db -= clutter_snr_loss_db
-                except Exception:
-                    pass  # Fail silently if clutter calculation fails
+                        clutter_snr_loss_db = thermal_snr_db - snr_db
+                except ValueError:
+                    raise
 
-            # ═══ PHASE 19: ECCM - FREQUENCY AGILITY vs JAMMING ═══
-            # If frequency agility is enabled, jammers are less effective
-            eccm_jam_reduction = 1.0
-            if self.frequency_agility_enabled and self.ecm_active:
-                # Radar hops frequency by ±5%, jammer stays on original
-                # Jamming effectiveness reduced significantly
-                eccm_jam_reduction = 0.2  # 80% reduction in jamming effect
-                snr_db += 6.0  # ~6 dB improvement against jamming
+            jammer_snr_loss_db = 0.0
+            jsr_db = None
+            active_ecm_type = (
+                target.ecm_type if self.ecm_type == "noise" else self.ecm_type
+            )
+            if self.ecm_active and target.jammer_active and "noise" in active_ecm_type:
+                effective_jammer_bandwidth = target.jammer_bandwidth_hz
+                if self.frequency_agility_enabled:
+                    effective_jammer_bandwidth = max(
+                        effective_jammer_bandwidth, 0.1 * self.radar.frequency_hz
+                    )
+                rain_loss_for_jsr_db = 0.0
+                if self.rain_rate_mm_hr > 0.0:
+                    rain_loss_for_jsr_db = ITU_R_P838.path_attenuation(
+                        geom["range_m"] / 1000.0,
+                        self.radar.frequency_hz / 1e9,
+                        self.rain_rate_mm_hr,
+                        elevation_angle_deg=geom["elevation_deg"],
+                        polarization_tilt_deg=self.radar.polarization_tilt_deg,
+                        two_way=True,
+                    )
+                jsr_db = self._ecm_simulator.calculate_jsr(
+                    radar_pos=self.radar.position,
+                    target_pos=target.position,
+                    jammer_pos=target.position,
+                    radar_power=self.radar.power_watts,
+                    radar_gain=10.0 ** (self.radar.antenna_gain_db / 10.0),
+                    jammer_power=target.jammer_power_watts,
+                    target_rcs=rcs,
+                    radar_bandwidth=self.radar.receiver_bandwidth_hz,
+                    jammer_bandwidth=effective_jammer_bandwidth,
+                    signal_path_loss_db=atm_loss_db
+                    + rain_loss_for_jsr_db
+                    + self.radar.system_losses_db,
+                    jammer_path_loss_db=0.5
+                    * (
+                        atm_loss_db + rain_loss_for_jsr_db + self.radar.system_losses_db
+                    ),
+                )
+                pre_jamming_snr_db = snr_db
+                snr_db = self._ecm_simulator.calculate_sjnr_db(snr_db, jsr_db)
+                jammer_snr_loss_db = pre_jamming_snr_db - snr_db
 
-            # ═══ PHASE 25: RAIN ATTENUATION (ITU-R P.838) ═══
-            # Rain causes significant attenuation at microwave frequencies
-            # Reference: ITU-R P.838-3 "Specific attenuation model for rain"
             rain_loss_db = 0.0
             if self.rain_rate_mm_hr > 0 and geom["range_m"] > 100:
                 freq_ghz = self.radar.frequency_hz / 1e9
                 range_km = geom["range_m"] / 1000
 
-                # ITU-R P.838 coefficients for horizontal polarization
-                # k and α depend on frequency (using X-band approximation)
-                # For 10 GHz: k ≈ 0.0101, α ≈ 1.276
-                if freq_ghz <= 10:
-                    k, alpha = 0.0101, 1.276
-                elif freq_ghz <= 20:
-                    k, alpha = 0.0367, 1.154
-                else:
-                    k, alpha = 0.0751, 1.099
-
-                # Specific attenuation: γ_R = k * R^α [dB/km]
-                gamma_rain = k * (self.rain_rate_mm_hr**alpha)
-
-                # Two-way path loss through rain
-                rain_loss_db = gamma_rain * 2 * range_km
+                rain_loss_db = ITU_R_P838.path_attenuation(
+                    range_km,
+                    freq_ghz,
+                    self.rain_rate_mm_hr,
+                    elevation_angle_deg=geom["elevation_deg"],
+                    polarization_tilt_deg=self.radar.polarization_tilt_deg,
+                    two_way=True,
+                )
                 snr_db -= rain_loss_db
 
-            # ═══ PHASE 25: RAIN VOLUME CLUTTER ═══
-            # Rain drops create radar returns that degrade SNR
-            # Reference: Marshall & Palmer, "Distribution of Raindrops", 1948
             rain_clutter_loss_db = 0.0
             if self.rain_rate_mm_hr > 0 and CLUTTER_AVAILABLE and geom["range_m"] > 100:
                 try:
                     freq_ghz = self.radar.frequency_hz / 1e9
                     beamwidth_rad = np.radians(self.radar.beamwidth_deg)
 
-                    # Get rain reflectivity using Marshall-Palmer Z-R relationship
                     eta = ClutterModel.rain_reflectivity_marshall_palmer(
                         self.rain_rate_mm_hr, freq_ghz
                     )
 
-                    # Calculate rain volume clutter RCS
                     rain_clutter_rcs = ClutterModel.volume_clutter_rcs(
                         eta, geom["range_m"], beamwidth_rad, self._pulse_width_s
                     )
 
-                    # Apply clutter-to-signal ratio loss
-                    if rain_clutter_rcs > 0.01:
-                        rain_clutter_loss_db = 10 * np.log10(
-                            1 + rain_clutter_rcs / (rcs + 0.01)
+                    if rain_clutter_rcs > 0.0:
+                        pre_volume_clutter_snr_db = snr_db
+                        snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
+                            pre_volume_clutter_snr_db, rcs, rain_clutter_rcs
                         )
-                        snr_db -= rain_clutter_loss_db
-                except Exception:
-                    pass  # Fail silently if rain clutter calculation fails
+                        rain_clutter_loss_db = pre_volume_clutter_snr_db - snr_db
+                except ValueError:
+                    raise
 
             # Calculate probability of detection (Swerling model)
             pd = self._calculate_pd(snr_db, target.swerling_model)
@@ -935,6 +1031,12 @@ class SimulationEngine:
                 pd=pd,
                 predicted_class=predicted_class,
                 confidence=ai_confidence,
+                atmospheric_loss_db=atm_loss_db,
+                rain_attenuation_db=rain_loss_db,
+                surface_clutter_loss_db=clutter_snr_loss_db,
+                rain_clutter_loss_db=rain_clutter_loss_db,
+                jammer_jsr_db=jsr_db,
+                jammer_loss_db=jammer_snr_loss_db,
             )
 
             results.append(result)
@@ -1002,16 +1104,17 @@ class SimulationEngine:
         self.log = SimulationLog()
 
     def _calculate_pd(
-        self, snr_db: float, swerling_model: SwerlingModel, pfa: float = 1e-6
+        self,
+        snr_db: float,
+        swerling_model: SwerlingModel,
+        pfa: Optional[float] = None,
     ) -> float:
         """
         Calculate probability of detection for given SNR.
 
-        Uses Albersheim's equation approximation:
-        SNR_req = A + 0.12*A*B + 1.7*B
-        where A = ln(0.62/Pfa), B = ln(Pd/(1-Pd))
-
-        Reference: Albersheim, 1981
+        Uses a square-law detector threshold derived from Pfa. Conditional
+        integrated target power follows a non-central chi-square distribution;
+        Swerling fluctuations are averaged over their RCS distributions.
 
         Args:
             snr_db: Signal-to-noise ratio [dB]
@@ -1021,27 +1124,12 @@ class SimulationEngine:
         Returns:
             Probability of detection (0-1)
         """
-        # Swerling fluctuation loss
-        fluctuation_loss = {
-            SwerlingModel.SWERLING_0: 0.0,
-            SwerlingModel.SWERLING_1: 8.0,
-            SwerlingModel.SWERLING_2: 7.0,
-            SwerlingModel.SWERLING_3: 5.0,
-            SwerlingModel.SWERLING_4: 4.5,
-        }
-
-        loss = fluctuation_loss.get(swerling_model, 0.0)
-        effective_snr = snr_db - loss
-
-        # Simple sigmoid model for Pd vs SNR
-        # Pd ≈ 0.5 at threshold, approaches 1 above, 0 below
-        threshold_snr = self.detection_threshold_db
-
-        # Using logistic function
-        k = 0.5  # Steepness
-        pd = 1.0 / (1.0 + np.exp(-k * (effective_snr - threshold_snr)))
-
-        return np.clip(pd, 0.0, 1.0)
+        return calculate_pd_swerling(
+            snr_db,
+            pfa=self.probability_false_alarm if pfa is None else pfa,
+            swerling_case=swerling_model.value,
+            n_pulses=self.pulses_integrated,
+        )
 
     @property
     def simulation_time(self) -> float:

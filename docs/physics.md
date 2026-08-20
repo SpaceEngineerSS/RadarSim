@@ -59,9 +59,12 @@ Where $\theta$ is the 3-dB beamwidth in degrees.
 
 ## Atmospheric Attenuation
 
-### ITU-R P.676-12 Model
+### ITU-R P.676-13 Model
 
-RadarSim implements the ITU-R Recommendation P.676-12 for atmospheric gas attenuation, covering frequencies up to 1000 GHz.
+RadarSim implements the Annex 1 line-by-line oxygen and water-vapour equations from
+Recommendation ITU-R P.676-13 over 1-1000 GHz. The spectroscopic line tables, pressure
+broadening, oxygen interference terms, dry-air continuum, and water-vapour continuum are
+evaluated for the scenario temperature, dry-air pressure, and water-vapour density.
 
 ### Total Attenuation
 
@@ -79,15 +82,8 @@ Key absorption features:
 - **60 GHz complex**: Strong O₂ resonance (~15 dB/km at peak)
 - **118.75 GHz line**: Secondary O₂ absorption
 
-```python
-# Normalized pressure and temperature
-rp = pressure_hpa / 1013.25
-rt = 288.0 / temperature_k
-
-# 60 GHz peak
-if 57 < frequency_ghz < 63:
-    gamma_o = 15.0 * rp * (rt ** 0.5)
-```
+The implementation is verified against the official ITU-R Study Group 3 validation workbook at
+12, 20, 60, 90, and 130 GHz, separately for oxygen and water vapour.
 
 ### Water Vapor Absorption
 
@@ -109,11 +105,14 @@ Where:
 
 | Freq (GHz) | $k_H$ | $\alpha_H$ |
 |------------|-------|------------|
-| 10 (X-Band)| 0.0101| 1.276 |
-| 20 (K-Band)| 0.0367| 1.154 |
-| 35 (Ka-Band)| 0.0751| 1.099 |
+| 10 (X-Band)| 0.01217| 1.2571 |
+| 20 (K-Band)| 0.09164| 1.0568 |
+| 35 (Ka-Band)| 0.3374| 0.9047 |
 
-**Implementation:** `src/simulation/engine.py` step loop
+The implementation evaluates the P.838-3 curve-fit equations continuously from 1 to 1000 GHz
+and combines horizontal and vertical coefficients for path elevation and polarization tilt.
+
+**Implementation:** `src/physics/rain.py::ITU_R_P838`
 
 ---
 

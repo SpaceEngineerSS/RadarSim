@@ -172,9 +172,7 @@ class ClutterModel:
         polarization: str = "HH",
     ) -> float:
         """
-        Sea clutter backscatter coefficient (σ0).
-
-        Uses simplified GIT (Georgia Tech) model.
+        Sea clutter backscatter coefficient using the NRL five-parameter model.
 
         Args:
             grazing_angle_rad: Grazing angle [rad]
@@ -185,23 +183,91 @@ class ClutterModel:
         Returns:
             σ0 in dB
 
-        Reference: GIT model, Nathanson Table 7.2
+        Valid for 0.5-35 GHz, 0.1-60 degree grazing, and sea states 0-6.
+
+        Reference: Gregers-Hansen and Mital, IEEE TAES, 2012.
         """
-        sea_state = max(0, min(6, sea_state))
+        grazing_angle_deg = float(np.degrees(grazing_angle_rad))
+        if not 0.1 <= grazing_angle_deg <= 60.0:
+            raise ValueError("NRL sea clutter model requires 0.1-60 degree grazing")
+        if not 0.5 <= frequency_ghz <= 35.0:
+            raise ValueError("NRL sea clutter model requires 0.5-35 GHz")
+        if not 0 <= sea_state <= 6:
+            raise ValueError("sea_state must be between 0 and 6")
 
-        if polarization == "HH":
-            sigma0_db = (
-                -50 + 10 * np.log10(sea_state + 0.1) + 25 * np.sin(grazing_angle_rad)
-            )
-        else:  # VV
-            sigma0_db = (
-                -45 + 10 * np.log10(sea_state + 0.1) + 20 * np.sin(grazing_angle_rad)
-            )
+        coefficients = {
+            "HH": (-73.00, 20.781, 7.351, 25.65, 0.00540),
+            "VV": (-50.796, 25.93, 0.7093, 21.588, 0.00211),
+        }
+        try:
+            c1, c2, c3, c4, c5 = coefficients[polarization.upper()]
+        except KeyError as error:
+            raise ValueError("polarization must be 'HH' or 'VV'") from error
 
-        # Frequency adjustment
-        sigma0_db += 3 * np.log10(frequency_ghz / 10)
+        frequency_term = (
+            (27.5 + c3 * grazing_angle_deg)
+            * np.log10(frequency_ghz)
+            / (1.0 + 0.95 * grazing_angle_deg)
+        )
+        sea_state_term = c4 * (1.0 + sea_state) ** (
+            1.0 / (2.0 + 0.085 * grazing_angle_deg + 0.033 * sea_state)
+        )
+        return float(
+            c1
+            + c2 * np.log10(np.sin(grazing_angle_rad))
+            + frequency_term
+            + sea_state_term
+            + c5 * grazing_angle_deg**2
+        )
 
-        return sigma0_db
+    @staticmethod
+    def surface_resolution_cell_area(
+        range_m: float,
+        pulse_width_s: float,
+        azimuth_beamwidth_rad: float,
+        elevation_beamwidth_rad: float,
+        grazing_angle_rad: float,
+    ) -> float:
+        """Approximate -3 dB surface area shared by range gate and antenna beam."""
+        positive = (
+            range_m,
+            pulse_width_s,
+            azimuth_beamwidth_rad,
+            elevation_beamwidth_rad,
+        )
+        if any(value <= 0.0 for value in positive):
+            raise ValueError("range, pulse width, and beamwidths must be positive")
+        if not 0.0 < grazing_angle_rad < np.pi / 2.0:
+            raise ValueError("grazing_angle_rad must be between 0 and pi/2")
+
+        range_gate_m = SPEED_OF_LIGHT * pulse_width_s / 2.0
+        ground_range_extent = range_gate_m / np.cos(grazing_angle_rad)
+        elevation_limited_extent = (
+            2.0
+            * range_m
+            * np.tan(elevation_beamwidth_rad / 2.0)
+            / np.sin(grazing_angle_rad)
+        )
+        cross_range_extent = 2.0 * range_m * np.tan(azimuth_beamwidth_rad / 2.0)
+        return float(
+            np.pi
+            / 4.0
+            * cross_range_extent
+            * min(ground_range_extent, elevation_limited_extent)
+        )
+
+    @staticmethod
+    def signal_to_noise_plus_clutter_db(
+        snr_db: float, target_rcs_m2: float, clutter_rcs_m2: float
+    ) -> float:
+        """Combine thermal-noise SNR with co-range clutter using echo-power ratios."""
+        if target_rcs_m2 <= 0.0:
+            raise ValueError("target_rcs_m2 must be positive")
+        if clutter_rcs_m2 < 0.0:
+            raise ValueError("clutter_rcs_m2 cannot be negative")
+        snr_linear = 10.0 ** (snr_db / 10.0)
+        inverse_sinr = 1.0 / snr_linear + clutter_rcs_m2 / target_rcs_m2
+        return float(-10.0 * np.log10(inverse_sinr))
 
     @staticmethod
     def ground_clutter_weibull(

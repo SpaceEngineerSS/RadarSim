@@ -327,11 +327,20 @@ class RadarParameters:
     temperature: float = STANDARD_TEMPERATURE  # K
     pulse_width: float = 1e-6  # s
     prf: float = 1000.0  # Hz
+    noise_bandwidth: Optional[float] = None  # Hz
     beamwidth_az: float = 0.03  # rad (~1.7°)
     beamwidth_el: float = 0.03  # rad
 
     def __post_init__(self) -> None:
         """Calculate derived parameters after initialization."""
+        if self.frequency <= 0.0:
+            raise ValueError("frequency must be greater than zero")
+        if self.power_transmitted <= 0.0:
+            raise ValueError("power_transmitted must be greater than zero")
+        if self.pulse_width <= 0.0:
+            raise ValueError("pulse_width must be greater than zero")
+        if self.noise_bandwidth is not None and self.noise_bandwidth <= 0.0:
+            raise ValueError("noise_bandwidth must be greater than zero")
         if self.wavelength == 0.0:
             self.wavelength = SPEED_OF_LIGHT / self.frequency
         if self.antenna_gain_rx is None:
@@ -601,7 +610,7 @@ def calculate_snr(
     received_power = calculate_received_power(radar, rcs, range_m, atmospheric_loss_db)
 
     noise_figure_linear = 10 ** (radar.noise_figure / 10)
-    bandwidth = 1.0 / radar.pulse_width  # Approximation: B ≈ 1/τ
+    bandwidth = radar.noise_bandwidth or 1.0 / radar.pulse_width
 
     noise_power = _calculate_noise_power_jit(
         radar.temperature, bandwidth, noise_figure_linear
@@ -635,7 +644,7 @@ def calculate_detection_range(
     noise_figure_linear = 10 ** (radar.noise_figure / 10)
     min_snr_linear = 10 ** (min_snr_db / 10)
 
-    bandwidth = 1.0 / radar.pulse_width
+    bandwidth = radar.noise_bandwidth or 1.0 / radar.pulse_width
     noise_power = _calculate_noise_power_jit(
         radar.temperature, bandwidth, noise_figure_linear
     )

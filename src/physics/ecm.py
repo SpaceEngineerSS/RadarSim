@@ -107,13 +107,12 @@ def _calculate_jsr_jit(
     rcs: float,
     jammer_range: float,
     target_range: float,
-    wavelength: float,
     bandwidth_ratio: float,
 ) -> float:
     """
     JIT-compiled Jam-to-Signal Ratio calculation.
 
-    JSR = (Pj * Gj * 4π * R_t^4) / (Pt * Gt * σ * R_j^2) * (Bj/Br)
+    JSR = (Pj * Gj * 4π * R_t^4) / (Pt * Gt * σ * R_j^2) * min(1, Br/Bj)
 
     Args:
         jammer_power: Jammer ERP [W]
@@ -123,8 +122,7 @@ def _calculate_jsr_jit(
         rcs: Target RCS [m²]
         jammer_range: Jammer to radar range [m]
         target_range: Target to radar range [m]
-        wavelength: Radar wavelength [m]
-        bandwidth_ratio: Bj/Br ratio
+        bandwidth_ratio: Receiver-to-jammer bandwidth ratio Br/Bj
 
     Returns:
         JSR [linear]
@@ -134,20 +132,11 @@ def _calculate_jsr_jit(
     if target_range < 1 or jammer_range < 1:
         return 0.0
 
-    # Signal power (from radar equation)
-    signal_power = (radar_power * radar_gain**2 * wavelength**2 * rcs) / (
-        (4 * np.pi) ** 3 * target_range**4
-    )
-
-    # Jam power at radar receiver
-    jam_power = (jammer_power * jammer_gain) / (4 * np.pi * jammer_range**2)
-
-    # Apply bandwidth ratio (Bj/Br)
-    jam_power *= min(1.0, bandwidth_ratio)
-
-    if signal_power > 0:
-        return jam_power / signal_power
-    return 1e10  # Very high JSR if no signal
+    numerator = 4.0 * np.pi * jammer_power * jammer_gain * target_range**4
+    denominator = radar_power * radar_gain * rcs * jammer_range**2
+    if denominator > 0.0:
+        return numerator / denominator * min(1.0, bandwidth_ratio)
+    return np.inf
 
 
 class ECMSimulator:
@@ -233,6 +222,10 @@ class ECMSimulator:
         jammer_power: float,
         target_rcs: float,
         radar_bandwidth: float = 1e6,
+        jammer_bandwidth: float = 100e6,
+        jammer_gain: float = 1.0,
+        signal_path_loss_db: float = 0.0,
+        jammer_path_loss_db: float = 0.0,
     ) -> float:
         """
         Calculate Jam-to-Signal Ratio.
@@ -253,11 +246,11 @@ class ECMSimulator:
         jammer_range = np.linalg.norm(jammer_pos - radar_pos)
         target_range = np.linalg.norm(target_pos - radar_pos)
 
-        # Assume jammer has omnidirectional antenna (gain = 1)
-        jammer_gain = 1.0
-
-        # Bandwidth ratio (assuming barrage jammer covers radar band)
-        bw_ratio = radar_bandwidth / 100e6  # 100 MHz barrage
+        if min(radar_power, radar_gain, jammer_power, target_rcs) <= 0.0:
+            raise ValueError("powers, radar gain, and target RCS must be positive")
+        if radar_bandwidth <= 0.0 or jammer_bandwidth <= 0.0 or jammer_gain <= 0.0:
+            raise ValueError("bandwidths and jammer gain must be positive")
+        bw_ratio = radar_bandwidth / jammer_bandwidth
 
         jsr_linear = _calculate_jsr_jit(
             jammer_power,
@@ -267,11 +260,20 @@ class ECMSimulator:
             target_rcs,
             jammer_range,
             target_range,
-            self.wavelength,
             bw_ratio,
         )
 
-        return 10 * np.log10(max(jsr_linear, 1e-10))
+        return (
+            10 * np.log10(max(jsr_linear, 1e-10))
+            + signal_path_loss_db
+            - jammer_path_loss_db
+        )
+
+    @staticmethod
+    def calculate_sjnr_db(snr_db: float, jsr_db: float) -> float:
+        """Combine thermal noise and jamming powers relative to the signal."""
+        inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_db / 10.0)
+        return float(-10.0 * np.log10(inverse_sjnr))
 
     def generate_noise_strobes(
         self,

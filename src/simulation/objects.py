@@ -188,6 +188,7 @@ class Target:
         has_jammer: bool = False,
         jammer_power_watts: float = 1000.0,
         jammer_bandwidth_hz: float = 100e6,
+        ecm_type: str = "noise_barrage",
     ):
         """
         Initialize target.
@@ -204,6 +205,7 @@ class Target:
             has_jammer: Whether target carries an active jammer
             jammer_power_watts: Jammer ERP if has_jammer is True [W]
             jammer_bandwidth_hz: Jammer bandwidth [Hz]
+            ecm_type: Jammer or deception technique identifier
         """
         self.target_id = target_id
         self.target_type = target_type
@@ -213,8 +215,13 @@ class Target:
 
         # ECM capability
         self.has_jammer = has_jammer
+        if jammer_power_watts < 0.0 or jammer_bandwidth_hz <= 0.0:
+            raise ValueError(
+                "jammer power cannot be negative and bandwidth must be positive"
+            )
         self.jammer_power_watts = jammer_power_watts
         self.jammer_bandwidth_hz = jammer_bandwidth_hz
+        self.ecm_type = ecm_type
         self.jammer_active = has_jammer  # Active by default if equipped
 
         # Initialize kinematic state
@@ -333,6 +340,7 @@ class Target:
             "jammer_active": self.jammer_active,
             "jammer_power_watts": self.jammer_power_watts,
             "jammer_bandwidth_hz": self.jammer_bandwidth_hz,
+            "ecm_type": self.ecm_type,
         }
 
 
@@ -353,6 +361,14 @@ class Radar:
         antenna_gain_db: float = 30.0,
         beamwidth_deg: float = 2.0,
         scan_rate_rpm: float = 6.0,
+        beamwidth_el_deg: float = None,
+        prf_hz: float = 1000.0,
+        pulse_width_s: float = 1e-6,
+        receiver_bandwidth_hz: float = None,
+        noise_figure_db: float = 4.0,
+        system_temperature_k: float = 290.0,
+        system_losses_db: float = 4.0,
+        polarization_tilt_deg: float = 0.0,
     ):
         """
         Initialize radar.
@@ -366,13 +382,52 @@ class Radar:
             antenna_gain_db: Antenna gain [dB]
             beamwidth_deg: 3dB beamwidth [degrees]
             scan_rate_rpm: Antenna rotation rate [RPM]
+            beamwidth_el_deg: Elevation 3dB beamwidth [degrees]
+            prf_hz: Pulse repetition frequency [Hz]
+            pulse_width_s: Transmitted pulse width [s]
+            receiver_bandwidth_hz: Equivalent receiver noise bandwidth [Hz]
+            noise_figure_db: Receiver noise figure [dB]
+            system_temperature_k: Receiver system temperature [K]
+            system_losses_db: Combined transmit and receive losses [dB]
+            polarization_tilt_deg: Polarization tilt relative to horizontal [degrees]
         """
+        positive_parameters = {
+            "frequency_hz": frequency_hz,
+            "power_watts": power_watts,
+            "beamwidth_deg": beamwidth_deg,
+            "prf_hz": prf_hz,
+            "pulse_width_s": pulse_width_s,
+            "system_temperature_k": system_temperature_k,
+        }
+        for name, value in positive_parameters.items():
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and greater than zero")
+
+        if beamwidth_el_deg is None:
+            beamwidth_el_deg = beamwidth_deg
+        if receiver_bandwidth_hz is None:
+            receiver_bandwidth_hz = 1.0 / pulse_width_s
+        if beamwidth_el_deg <= 0.0 or receiver_bandwidth_hz <= 0.0:
+            raise ValueError(
+                "beamwidth_el_deg and receiver_bandwidth_hz must be positive"
+            )
+        if noise_figure_db < 0.0 or system_losses_db < 0.0:
+            raise ValueError("noise_figure_db and system_losses_db cannot be negative")
+
         self.radar_id = radar_id
         self.frequency_hz = frequency_hz
         self.power_watts = power_watts
         self.antenna_gain_db = antenna_gain_db
         self.beamwidth_rad = np.radians(beamwidth_deg)
+        self.beamwidth_el_rad = np.radians(beamwidth_el_deg)
         self.scan_rate_rpm = scan_rate_rpm
+        self.prf_hz = prf_hz
+        self.pulse_width_s = pulse_width_s
+        self.receiver_bandwidth_hz = receiver_bandwidth_hz
+        self.noise_figure_db = noise_figure_db
+        self.system_temperature_k = system_temperature_k
+        self.system_losses_db = system_losses_db
+        self.polarization_tilt_deg = polarization_tilt_deg
 
         # Kinematic state
         if velocity is None:
@@ -458,7 +513,9 @@ class Radar:
         el_diff = abs(geom["elevation_rad"] - self.antenna_elevation)
 
         # Check if within beamwidth
-        return az_diff <= self.beamwidth_rad / 2 and el_diff <= self.beamwidth_rad / 2
+        return (
+            az_diff <= self.beamwidth_rad / 2 and el_diff <= self.beamwidth_el_rad / 2
+        )
 
     @property
     def position(self) -> np.ndarray:
@@ -481,7 +538,15 @@ class Radar:
             "power_watts": self.power_watts,
             "antenna_gain_db": self.antenna_gain_db,
             "beamwidth_deg": np.degrees(self.beamwidth_rad),
+            "beamwidth_el_deg": np.degrees(self.beamwidth_el_rad),
             "scan_rate_rpm": self.scan_rate_rpm,
+            "prf_hz": self.prf_hz,
+            "pulse_width_s": self.pulse_width_s,
+            "receiver_bandwidth_hz": self.receiver_bandwidth_hz,
+            "noise_figure_db": self.noise_figure_db,
+            "system_temperature_k": self.system_temperature_k,
+            "system_losses_db": self.system_losses_db,
+            "polarization_tilt_deg": self.polarization_tilt_deg,
         }
 
 

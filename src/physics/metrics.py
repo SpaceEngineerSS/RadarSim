@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 import numpy as np
-from scipy import special
+from scipy import special, stats
 
 
 @dataclass
@@ -54,109 +54,96 @@ def albersheim_snr(pd: float, pfa: float, n_pulses: int = 1) -> float:
 
     Reference: Albersheim, IEEE Trans. AES, 1981
     """
-    # Clamp inputs to valid range
-    pd = np.clip(pd, 0.01, 0.9999)
-    pfa = np.clip(pfa, 1e-12, 0.1)
+    if not 0.0 < pd < 1.0:
+        raise ValueError("pd must be between 0 and 1")
+    if not 0.0 < pfa < 1.0:
+        raise ValueError("pfa must be between 0 and 1")
+    if isinstance(n_pulses, bool) or not isinstance(n_pulses, (int, np.integer)):
+        raise TypeError("n_pulses must be an integer")
+    if n_pulses < 1:
+        raise ValueError("n_pulses must be at least 1")
 
-    # Albersheim's approximation
-    A = np.log(0.62 / pfa)
-    B = np.log(pd / (1 - pd))
+    a = np.log(0.62 / pfa)
+    b = np.log(pd / (1.0 - pd))
+    argument = a + 0.12 * a * b + 1.7 * b
+    if argument <= 0.0:
+        raise ValueError("pd and pfa are outside the usable Albersheim domain")
 
-    # Single pulse SNR
-    snr_1 = A + 0.12 * A * B + 1.7 * B
+    integration_factor = 6.2 + 4.54 / np.sqrt(n_pulses + 0.44)
+    return float(-5.0 * np.log10(n_pulses) + integration_factor * np.log10(argument))
 
-    # Integration gain (non-coherent)
-    if n_pulses > 1:
-        snr_n = snr_1 - 6.2 + 4.54 * np.sqrt(n_pulses + 0.44)
-        snr_db = snr_n / n_pulses
-    else:
-        snr_db = snr_1
 
-    return snr_db
+def _fluctuating_target_pd(
+    snr_linear: float,
+    threshold: float,
+    n_pulses: int,
+    gamma_shape: float,
+    quadrature_order: int = 48,
+) -> float:
+    if gamma_shape >= 64.0:
+        return float(
+            stats.ncx2.sf(
+                2.0 * threshold,
+                2 * n_pulses,
+                2.0 * n_pulses * snr_linear,
+            )
+        )
+
+    nodes, weights = special.roots_genlaguerre(quadrature_order, gamma_shape - 1.0)
+    rcs_scale = nodes / gamma_shape
+    conditional_pd = stats.ncx2.sf(
+        2.0 * threshold,
+        2 * n_pulses,
+        2.0 * n_pulses * snr_linear * rcs_scale,
+    )
+    return float(np.dot(weights, conditional_pd) / special.gamma(gamma_shape))
 
 
 def calculate_pd_swerling(
-    snr_db: float, pfa: float = 1e-6, swerling_case: int = 1, n_pulses: int = 1
+    snr_db: float,
+    pfa: float = 1e-6,
+    swerling_case: int = 1,
+    n_pulses: int = 1,
 ) -> float:
+    """Return square-law detection probability for Swerling cases 0 through 4.
+
+    ``snr_db`` is the mean single-pulse signal-to-noise ratio. Integrated
+    noise power is gamma distributed. Conditional target power is evaluated
+    with the non-central chi-square survival function; gamma-distributed RCS
+    is averaged by generalized Gauss-Laguerre quadrature.
     """
-    Calculate Probability of Detection for Swerling target models.
+    if not 0.0 < pfa < 1.0:
+        raise ValueError("pfa must be between 0 and 1")
+    if not np.isfinite(snr_db):
+        return float(pfa) if snr_db < 0.0 else 1.0
+    if isinstance(n_pulses, bool) or not isinstance(n_pulses, (int, np.integer)):
+        raise TypeError("n_pulses must be an integer")
+    if n_pulses < 1:
+        raise ValueError("n_pulses must be at least 1")
+    if swerling_case not in (0, 1, 2, 3, 4):
+        raise ValueError("swerling_case must be one of 0, 1, 2, 3, or 4")
 
-    Uses Shnidman's approximation for fast calculation.
+    snr_linear = 10.0 ** (snr_db / 10.0)
+    threshold = float(special.gammainccinv(n_pulses, pfa))
 
-    Swerling Cases:
-        0: Non-fluctuating (Marcum's case)
-        1: Slow fluctuation, many scatterers (exponential)
-        2: Fast fluctuation, many scatterers
-        3: Slow fluctuation, dominant + small scatterers
-        4: Fast fluctuation, dominant + small scatterers
-
-    Args:
-        snr_db: Signal-to-noise ratio [dB]
-        pfa: Probability of false alarm
-        swerling_case: Swerling model (0-4)
-        n_pulses: Number of pulses integrated
-
-    Returns:
-        Probability of detection (0-1)
-
-    Reference: Shnidman, IEEE Trans. AES, 2002
-    """
-    snr_linear = 10 ** (snr_db / 10)
-
-    if snr_linear <= 0:
-        return 0.0
-
-    # Detection threshold from Pfa
-    # Threshold = -ln(Pfa) for single pulse
-    threshold = -np.log(max(pfa, 1e-15))
-
-    # Swerling case adjustments
     if swerling_case == 0:
-        # Non-fluctuating (Marcum)
-        # Pd ≈ Q(x, sqrt(2*SNR)) where Q is Marcum-Q function
-        # Simplified: use chi-square approximation
-        x = threshold
-        lambda_param = 2 * snr_linear * n_pulses
-
-        # Marcum Q-function approximation
-        if snr_db > 15:
-            pd = 0.999
-        elif snr_db < -5:
-            pd = 0.001
-        else:
-            # Use normal approximation for moderate SNR
-            mu = lambda_param
-            sigma = np.sqrt(2 * lambda_param)
-            pd = 0.5 * special.erfc((x - mu) / (sigma * np.sqrt(2)))
-
-    elif swerling_case == 1 or swerling_case == 2:
-        # Exponential RCS fluctuation (many scatterers)
-        # Pd = (1 + 1/SNR)^(n-1) * exp(-threshold/(1 + SNR))
-        snr_eff = snr_linear * n_pulses
-
-        if swerling_case == 1:
-            # Slow fluctuation - correlated across pulses
-            pd = np.exp(-threshold / (1 + snr_eff))
-        else:
-            # Fast fluctuation - decorrelated
-            pd = 1 - (1 - np.exp(-threshold / (1 + snr_linear))) ** n_pulses
-
-    elif swerling_case == 3 or swerling_case == 4:
-        # Chi-square 4 DOF (dominant scatterer)
-        snr_eff = snr_linear * n_pulses
-        x = threshold
-
-        if swerling_case == 3:
-            pd = (1 + x / (1 + snr_eff)) * np.exp(-x / (1 + snr_eff))
-        else:
-            # Approximate for Swerling 4
-            pd = 1 - (1 - (1 + x) * np.exp(-x / (1 + snr_linear))) ** n_pulses
-
+        pd = stats.ncx2.sf(
+            2.0 * threshold,
+            2 * n_pulses,
+            2.0 * n_pulses * snr_linear,
+        )
     else:
-        # Default to Swerling 1
-        pd = np.exp(-threshold / (1 + snr_linear * n_pulses))
+        gamma_shape = 1.0 if swerling_case in (1, 2) else 2.0
+        if swerling_case in (2, 4):
+            gamma_shape *= n_pulses
+        pd = _fluctuating_target_pd(
+            snr_linear,
+            threshold,
+            n_pulses,
+            gamma_shape,
+        )
 
-    return np.clip(pd, 0.0, 1.0)
+    return float(np.clip(pd, 0.0, 1.0))
 
 
 def calculate_pd_vs_range(

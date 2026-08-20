@@ -62,7 +62,7 @@
 | Feature | Details |
 |---------|---------|
 | **Ground Clutter** | Weibull distribution, σ⁰ coefficients |
-| **Sea Clutter** | **GIT Model**, Douglas sea states (1-6) |
+| **Sea Clutter** | **NRL five-parameter model**, sea states 0-6, HH/VV |
 | **Rain Physics** | ITU-R P.838 Attenuation + Marshall-Palmer Clutter |
 | **MTI Filtering** | Velocity threshold, slow-mover rejection |
 

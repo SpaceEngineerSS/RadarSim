@@ -390,8 +390,7 @@ class ECCMController:
         """
         Calculate Signal-to-Jamming-plus-Noise Ratio.
 
-        SJNR = SNR / (1 + J/S)  [linear]
-        SJNR_dB = SNR_dB - 10·log₁₀(1 + 10^(JSR_eff/10))
+        SJNR = 1 / (1/SNR + J/S)  [linear]
 
         Args:
             snr_db: Signal-to-noise ratio [dB]
@@ -405,9 +404,8 @@ class ECCMController:
         if jsr_eff < -50:
             return snr_db  # No significant jamming
 
-        jsr_linear = 10.0 ** (jsr_eff / 10.0)
-        sjnr_db = snr_db - 10.0 * np.log10(1.0 + jsr_linear)
-        return sjnr_db
+        inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_eff / 10.0)
+        return float(-10.0 * np.log10(inverse_sjnr))
 
     def get_status(self) -> dict:
         """Get combined ECCM status for UI."""
@@ -464,8 +462,7 @@ def validate_eccm() -> dict:
     # ── Test 3: SJNR with Jamming ──
     ctrl = ECCMController(center_freq_hz=10e9, n_freq_hops=10)
     ctrl.set_jamming_environment(True, jsr_db=20.0)
-    sjnr_no_eccm = 20.0 - 10.0 * np.log10(1.0 + 10.0 ** (20.0 / 10.0))
-    sjnr_with_eccm = ctrl.calculate_sjnr_db(snr_db=20.0)
+    sjnr_no_eccm = -10.0 * np.log10(10.0 ** (-20.0 / 10.0) + 10.0 ** (20.0 / 10.0))
 
     # Without ECCM, SJNR should be much lower
     ctrl.enable_frequency_agility()
