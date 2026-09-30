@@ -331,20 +331,8 @@ class SimulationEngine:
         # Logging
         self.log = SimulationLog()
 
-        # Build radar parameters for physics
-        self._radar_params = RadarParameters(
-            frequency=radar.frequency_hz,
-            power_transmitted=radar.power_watts,
-            antenna_gain_tx=radar.antenna_gain_db,
-            antenna_gain_rx=radar.antenna_gain_db,
-            system_losses_tx=radar.system_losses_db / 2.0,
-            system_losses_rx=radar.system_losses_db / 2.0,
-            noise_figure=radar.noise_figure_db,
-            temperature=radar.system_temperature_k,
-            pulse_width=radar.pulse_width_s,
-            prf=radar.prf_hz,
-            noise_bandwidth=radar.receiver_bandwidth_hz,
-        )
+        # Radar parameters are accessed dynamically via self._radar_params property
+        # to ensure real-time synchronization with self.radar changes.
 
         # ECM false targets (chaff, DRFM ghosts, decoys)
         self.false_targets: List[FalseTarget] = []
@@ -809,10 +797,10 @@ class SimulationEngine:
             # Get target RCS with fluctuation
             rcs = target.get_rcs(self.radar.position)
 
-            # Calculate atmospheric loss
+            # Calculate atmospheric loss (ITU-R P.676 valid for 1-1000 GHz; negligible below 1 GHz)
             atm_loss_db = 0.0
-            if self.enable_atmospheric:
-                freq_ghz = self.radar.frequency_hz / 1e9
+            freq_ghz = self.radar.frequency_hz / 1e9
+            if self.enable_atmospheric and freq_ghz >= 1.0:
                 range_km = geom["range_m"] / 1000
                 if range_km > 0.1:
                     atm_loss_db = ITU_R_P676.total_attenuation(
@@ -825,10 +813,10 @@ class SimulationEngine:
                     )
 
             rain_loss_db = 0.0
-            if self.rain_rate_mm_hr > 0.0 and geom["range_m"] > 100.0:
+            if self.rain_rate_mm_hr > 0.0 and geom["range_m"] > 100.0 and freq_ghz >= 1.0:
                 rain_loss_db = ITU_R_P838.path_attenuation(
                     geom["range_m"] / 1000.0,
-                    self.radar.frequency_hz / 1e9,
+                    freq_ghz,
                     self.rain_rate_mm_hr,
                     elevation_angle_deg=geom["elevation_deg"],
                     polarization_tilt_deg=self.radar.polarization_tilt_deg,
@@ -972,10 +960,10 @@ class SimulationEngine:
                         effective_jammer_bandwidth, 0.1 * self.radar.frequency_hz
                     )
                 rain_loss_for_jsr_db = 0.0
-                if self.rain_rate_mm_hr > 0.0:
+                if self.rain_rate_mm_hr > 0.0 and freq_ghz >= 1.0:
                     rain_loss_for_jsr_db = ITU_R_P838.path_attenuation(
                         geom["range_m"] / 1000.0,
-                        self.radar.frequency_hz / 1e9,
+                        freq_ghz,
                         self.rain_rate_mm_hr,
                         elevation_angle_deg=geom["elevation_deg"],
                         polarization_tilt_deg=self.radar.polarization_tilt_deg,
@@ -1203,6 +1191,29 @@ class SimulationEngine:
     def simulation_time(self) -> float:
         """Current simulation time [s]."""
         return self.current_time
+
+    @property
+    def _radar_params(self) -> RadarParameters:
+        """
+        Dynamic radar parameters synchronized with self.radar in real time.
+
+        Ensures that interactive UI controls or runtime API changes to
+        radar frequency, power, bandwidth, or losses are immediately
+        reflected in SNR and detection calculations.
+        """
+        return RadarParameters(
+            frequency=self.radar.frequency_hz,
+            power_transmitted=self.radar.power_watts,
+            antenna_gain_tx=self.radar.antenna_gain_db,
+            antenna_gain_rx=self.radar.antenna_gain_db,
+            system_losses_tx=self.radar.system_losses_db / 2.0,
+            system_losses_rx=self.radar.system_losses_db / 2.0,
+            noise_figure=self.radar.noise_figure_db,
+            temperature=self.radar.system_temperature_k,
+            pulse_width=self.radar.pulse_width_s,
+            prf=self.radar.prf_hz,
+            noise_bandwidth=self.radar.receiver_bandwidth_hz,
+        )
 
 
 # =============================================================================

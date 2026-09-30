@@ -53,6 +53,7 @@ LAND_GAMMA_PRIORS_DB: Dict[str, float] = {
     "forest": -15.0,
     "desert": -30.0,
     "mountains": -8.0,
+    "mountain": -8.0,
 }
 
 

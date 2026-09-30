@@ -159,3 +159,25 @@ simulation:
     assert restored.targets[0].drfm_pull_rate_mps == pytest.approx(85.0)
     assert restored.targets[0].drfm_max_pull_m == pytest.approx(1600.0)
     assert restored.targets[0].drfm_inherent_delay_s == pytest.approx(4.0e-7)
+
+
+def test_all_scenarios_load_and_step_successfully():
+    """Verify that all distributed scenarios load and step without errors."""
+    import numpy as np
+
+    scenario_files = list(SCENARIOS.glob("*.yaml")) + list(SCENARIOS.glob("*.json"))
+    assert len(scenario_files) >= 10, "Expected at least 10 scenario files"
+
+    for scenario_file in scenario_files:
+        loader = ScenarioLoader(str(scenario_file))
+        engine = loader.create_simulation_engine()
+        assert engine is not None, f"Failed to instantiate engine for {scenario_file.name}"
+
+        # Run 25 steps
+        for _ in range(25):
+            results = engine.step()
+            assert isinstance(results, list)
+            for res in results:
+                assert np.isfinite(res.snr_db) or res.snr_db == -100.0
+                assert np.isfinite(res.true_range_m)
+

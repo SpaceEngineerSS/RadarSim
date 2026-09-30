@@ -388,7 +388,7 @@ class ControlPanel(QWidget):
                     self._arch_callback(preset)
 
                 print(
-                    f"[ARCH] Applied: {preset_name} → λ={wavelength_cm:.1f}cm, G={preset.gain_db:.1f}dB"
+                    f"[ARCH] Applied: {preset_name} -> wavelength={wavelength_cm:.1f}cm, G={preset.gain_db:.1f}dB"
                 )
         except Exception as e:
             print(f"[ARCH] Failed to apply preset: {e}")

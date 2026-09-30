@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         - Dark military theme
     """
 
-    def __init__(self) -> None:
+    def __init__(self, scenario_path: Optional[str] = None) -> None:
         super().__init__()
 
         self.setWindowTitle("RadarSim - Professional Radar Simulation")
@@ -123,7 +123,10 @@ class MainWindow(QMainWindow):
         self._load_settings()
 
         # Start simulation in LIVE mode
-        self._start_simulation()
+        if scenario_path:
+            self.load_scenario(scenario_path)
+        else:
+            self._start_simulation()
 
     def _apply_dark_theme(self) -> None:
         """Apply dark military theme."""
@@ -898,18 +901,16 @@ class MainWindow(QMainWindow):
     # SCENARIO & REPLAY HANDLERS
     # ═══════════════════════════════════════════════════════════════════════
 
-    def _on_load_scenario(self) -> None:
-        """Handle File > Load Scenario action."""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Scenario",
-            "scenarios",
-            "YAML Files (*.yaml *.yml);;All Files (*)",
-        )
+    def load_scenario(self, filepath: str) -> bool:
+        """
+        Load scenario from YAML or JSON file into the simulation engine and update GUI.
 
-        if not filepath:
-            return
+        Args:
+            filepath: Path to YAML or JSON scenario file
 
+        Returns:
+            True if loaded successfully, False otherwise
+        """
         try:
             # Load scenario
             loader = ScenarioLoader(filepath)
@@ -963,11 +964,26 @@ class MainWindow(QMainWindow):
                 self.a_scope.setMinimumHeight(180)
 
             self.status_bar.showMessage(f"LOADED: {scenario_name}")
+            return True
 
         except FileNotFoundError:
             QMessageBox.critical(self, "Error", f"File not found:\n{filepath}")
+            return False
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load scenario:\n{str(e)}")
+            return False
+
+    def _on_load_scenario(self) -> None:
+        """Handle File > Load Scenario action."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Scenario",
+            "scenarios",
+            "Scenario Files (*.yaml *.yml *.json);;YAML Files (*.yaml *.yml);;JSON Files (*.json);;All Files (*)",
+        )
+
+        if filepath:
+            self.load_scenario(filepath)
 
     def _switch_to_live_mode(self) -> None:
         """Switch to LIVE simulation mode."""

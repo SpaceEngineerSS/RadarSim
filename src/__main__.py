@@ -5,7 +5,20 @@ from __future__ import annotations
 import sys
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="RadarSim desktop application")
+    parser.add_argument(
+        "scenario",
+        nargs="?",
+        default=None,
+        help="Optional path to scenario YAML or JSON file to run on startup",
+    )
+    parsed_args, remaining_argv = parser.parse_known_args(
+        sys.argv[1:] if argv is None else argv
+    )
+
     try:
         from PySide6.QtGui import QColor, QPalette
         from PySide6.QtWidgets import QApplication
@@ -15,7 +28,7 @@ def main() -> int:
         print(f"Missing dependency: {exc.name}", file=sys.stderr)
         return 1
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = QApplication.instance() or QApplication([sys.argv[0]] + remaining_argv)
     app.setApplicationName("RadarSim")
     app.setOrganizationName("RadarSim")
     app.setStyle("Fusion")
@@ -31,7 +44,7 @@ def main() -> int:
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(0, 255, 100))
     app.setPalette(palette)
 
-    window = MainWindow()
+    window = MainWindow(scenario_path=parsed_args.scenario)
     window.show()
     return app.exec()
 

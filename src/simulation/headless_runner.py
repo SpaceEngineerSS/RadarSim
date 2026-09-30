@@ -186,9 +186,10 @@ class HeadlessRunner:
             if self.config.enable_atmospheric:
                 freq_ghz = self.config.frequency_hz / 1e9
                 range_km = self.target_range / 1000
-                atm_loss_db = ITU_R_P676.total_attenuation(
-                    range_km, freq_ghz, two_way=True
-                )
+                if freq_ghz >= 1.0:
+                    atm_loss_db = ITU_R_P676.total_attenuation(
+                        range_km, freq_ghz, two_way=True
+                    )
 
             # Calculate SNR
             snr_db = calculate_snr(

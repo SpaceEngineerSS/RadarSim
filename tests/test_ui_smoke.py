@@ -35,6 +35,28 @@ def test_main_window_constructs_and_closes(application) -> None:
     application.processEvents()
 
 
+def test_main_window_loads_scenarios(application) -> None:
+    from pathlib import Path
+
+    scenarios_dir = Path(__file__).parents[1] / "scenarios"
+    window = MainWindow(scenario_path=str(scenarios_dir / "basic_tracking.json"))
+    window.show()
+    application.processEvents()
+
+    assert window.engine is not None
+    assert len(window.engine.targets) == 3
+
+    # Test loading YAML scenario
+    loaded = window.load_scenario(str(scenarios_dir / "f16_vs_sa6.yaml"))
+    application.processEvents()
+    assert loaded is True
+    assert window.engine.radar.frequency_hz == pytest.approx(3.0e9)
+    assert len(window.engine.targets) == 2
+
+    window.close()
+    application.processEvents()
+
+
 def test_target_inspector_uses_engine_detection_model(application) -> None:
     inspector = TargetInspector()
     assert inspector._calculate_pd(8.0) == pytest.approx(
