@@ -57,10 +57,10 @@ jobs:
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path '${{ matrix.executable }}', README.md, LICENSE -DestinationPath 'RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.zip'
+        run: Compress-Archive -Path '${{ matrix.executable }}', scenarios, README.md, LICENSE -DestinationPath 'RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.zip'
       - name: Package Unix
         if: runner.os != 'Windows'
-        run: tar -czf "RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.tar.gz" "${{ matrix.executable }}" README.md LICENSE
+        run: tar -czf "RadarSim_${{ github.ref_name }}_${{ matrix.platform }}.tar.gz" "${{ matrix.executable }}" scenarios README.md LICENSE
       - uses: actions/upload-artifact@v4
         with:
           name: RadarSim_${{ matrix.platform }}

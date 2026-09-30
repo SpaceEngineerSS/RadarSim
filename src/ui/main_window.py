@@ -21,7 +21,9 @@ Architecture: Model-View-Controller (MVC)
 - Components extracted to src/ui/panels/ for modularity
 """
 
+import sys
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QSettings, Qt, Slot
@@ -351,6 +353,10 @@ class MainWindow(QMainWindow):
         load_scenario_action.setShortcut("Ctrl+O")
         load_scenario_action.triggered.connect(self._on_load_scenario)
         file_menu.addAction(load_scenario_action)
+
+        # Built-in scenarios submenu
+        presets_menu = file_menu.addMenu("⚡ &Built-in Scenarios")
+        self._populate_scenario_presets_menu(presets_menu)
 
         # Save-scenario action
         save_scenario_action = QAction("&Save Scenario As...", self)
@@ -973,12 +979,65 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load scenario:\n{str(e)}")
             return False
 
+    def _get_scenarios_dir(self) -> Path:
+        """Locate scenarios directory across installed package, PyInstaller bundle, and repo root."""
+        candidates = []
+
+        # 1. Next to the executable when frozen
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / "scenarios")
+
+        # 2. Inside PyInstaller extraction folder (_MEIPASS)
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(Path(sys._MEIPASS) / "scenarios")
+
+        # 3. Next to repository root
+        repo_root = Path(__file__).resolve().parents[2]
+        candidates.append(repo_root / "scenarios")
+
+        # 4. Current working directory
+        candidates.append(Path.cwd() / "scenarios")
+
+        for cand in candidates:
+            if cand.is_dir():
+                return cand.resolve()
+
+        return Path("scenarios").resolve()
+
+    def _populate_scenario_presets_menu(self, menu) -> None:
+        """Populate the Built-in Scenarios submenu with discovered scenario files."""
+        scenarios_dir = self._get_scenarios_dir()
+        if not scenarios_dir.is_dir():
+            empty_action = QAction("No scenarios found", self)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return
+
+        scenario_files = sorted(
+            [f for f in scenarios_dir.iterdir() if f.suffix.lower() in (".yaml", ".yml", ".json")]
+        )
+        if not scenario_files:
+            empty_action = QAction("No scenarios found", self)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return
+
+        for s_file in scenario_files:
+            title = s_file.stem.replace("_", " ").title()
+            action = QAction(f"{title} ({s_file.name})", self)
+            action.triggered.connect(
+                lambda checked=False, p=str(s_file): self.load_scenario(p)
+            )
+            menu.addAction(action)
+
     def _on_load_scenario(self) -> None:
         """Handle File > Load Scenario action."""
+        initial_dir = str(self._get_scenarios_dir())
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Load Scenario",
-            "scenarios",
+            initial_dir,
             "Scenario Files (*.yaml *.yml *.json);;YAML Files (*.yaml *.yml);;JSON Files (*.json);;All Files (*)",
         )
 

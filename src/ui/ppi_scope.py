@@ -112,11 +112,25 @@ class PPIScope(QWidget):
         # State
         self.current_sweep_angle = 0.0  # radians
         self.blips: List[TargetBlip] = []
-        self.blip_history: deque = deque(maxlen=500)  # Historical blips for persistence
+        self.blip_history: deque = deque(maxlen=150)  # Historical blips for persistence
+        self._last_blip_time: Dict[int, float] = {}  # Throttle blip additions per target
         self.last_update_time = time.time()
 
-        # ═══ PERFORMANCE: Frame rate limiting - REDUCED ═══
-        self._min_update_interval = 1.0 / 15.0  # 15 FPS max (was 30)
+        # ═══ PERFORMANCE: Pre-cached Brush Palettes ═══
+        # Avoids on-the-fly QPainter rasterization in pyqtgraph.fragmentAtlas
+        self._phosphor_palette = [
+            pg.mkBrush(0, 180, 80, int(a))
+            for a in np.linspace(20, 150, 10)
+        ]
+        self._affiliation_brushes = {
+            "hostile": [pg.mkBrush(255, 68, 68, a) for a in [100, 140, 180, 230]],
+            "friendly": [pg.mkBrush(0, 191, 255, a) for a in [100, 140, 180, 230]],
+            "neutral": [pg.mkBrush(0, 255, 0, a) for a in [80, 120, 160, 200]],
+            "unknown": [pg.mkBrush(255, 255, 0, a) for a in [80, 120, 160, 200]],
+        }
+
+        # ═══ PERFORMANCE: Frame rate limiting ═══
+        self._min_update_interval = 1.0 / 30.0  # 30 FPS max
         self._last_frame_time = 0.0
 
         # Target selection
@@ -136,10 +150,10 @@ class PPIScope(QWidget):
         # Setup UI
         self._setup_ui()
 
-        # Decay timer - SLOWED DOWN for performance
+        # Decay timer: 10 Hz decay and noise refresh (decoupled from simulation thread)
         self._decay_timer = QTimer(self)
         self._decay_timer.timeout.connect(self._decay_phosphor)
-        self._decay_timer.start(200)  # 5 Hz decay update (was 20 Hz)
+        self._decay_timer.start(100)  # 10 Hz decay update
 
     def _setup_ui(self):
         """Setup the UI components."""
@@ -203,15 +217,23 @@ class PPIScope(QWidget):
         self.plot_widget.addItem(self.phosphor_scatter)
 
         # ═══ VELOCITY LEADER LINES ═══
-        # Lines showing target heading and speed
+        # Batched curve items per affiliation (connect='pairs' eliminates scene item churn)
+        self._leader_curves = {
+            "hostile": pg.PlotCurveItem(pen=pg.mkPen(color=(255, 68, 68, 150), width=1, style=Qt.PenStyle.DashLine)),
+            "friendly": pg.PlotCurveItem(pen=pg.mkPen(color=(0, 191, 255, 150), width=1, style=Qt.PenStyle.DashLine)),
+            "other": pg.PlotCurveItem(pen=pg.mkPen(color=(255, 255, 0, 150), width=1, style=Qt.PenStyle.DashLine)),
+        }
+        for curve in self._leader_curves.values():
+            self.plot_widget.addItem(curve)
         self._velocity_leaders: List[pg.PlotCurveItem] = []
 
         # ═══ NOISE OVERLAY (Raw Video Effect) ═══
-        # Creates realistic CRT phosphor noise
+        # Pre-computed CRT phosphor noise frames
         self.noise_image = pg.ImageItem()
         self.noise_image.setZValue(-10)  # Behind targets
         self.noise_image.setOpacity(0.3)
         self._noise_data = np.zeros((100, 100), dtype=np.float32)
+        self._init_noise_frames()
         self._update_noise()
         self.plot_widget.addItem(self.noise_image)
 
@@ -358,13 +380,17 @@ class PPIScope(QWidget):
 
             if target["is_detected"]:
                 current_blips.append(blip)
-                self.blip_history.append(blip)
+                # Rate-limit adding blip to historical persistence trail to 5 Hz (every 0.2s)
+                # so we avoid dumping 30 duplicate blips per target every second
+                last_t = self._last_blip_time.get(target["id"], 0.0)
+                if current_time - last_t >= 0.2:
+                    self.blip_history.append(blip)
+                    self._last_blip_time[target["id"]] = current_time
 
         self.blips = current_blips
 
         # Update displays
         self._update_blips()
-        self._update_phosphor()
         self._update_velocity_leaders(targets)  # Draw heading vectors
 
         # Update status
@@ -390,7 +416,7 @@ class PPIScope(QWidget):
         self.sweep_line.setData(x, y)
 
     def _update_blips(self):
-        """Update current target blips with MIL-STD-2525 colors."""
+        """Update current target blips with MIL-STD-2525 colors using pre-cached brushes."""
         if not self.blips:
             self.blip_scatter.setData([], [])
             self.selected_marker.setData([], [])
@@ -399,11 +425,9 @@ class PPIScope(QWidget):
         x = [b.x for b in self.blips]
         y = [b.y for b in self.blips]
 
-        # MIL-STD-2525D Affiliation-based coloring
         brushes = []
         symbols = []
         for blip in self.blips:
-            # Determine affiliation from target name
             name_lower = blip.name.lower() if blip.name else ""
 
             if (
@@ -411,29 +435,25 @@ class PPIScope(QWidget):
                 or "hostile" in name_lower
                 or "enemy" in name_lower
             ):
-                # HOSTILE - Red Diamond
-                color = (255, 68, 68, 230)
+                affil = "hostile"
                 symbol = "d"  # diamond
             elif (
                 "friendly" in name_lower
                 or "allied" in name_lower
                 or "blue" in name_lower
             ):
-                # FRIENDLY - Cyan Rectangle
-                color = (0, 191, 255, 230)
+                affil = "friendly"
                 symbol = "s"  # square
             elif "neutral" in name_lower or "civilian" in name_lower:
-                # NEUTRAL - Green Square
-                color = (0, 255, 0, 200)
+                affil = "neutral"
                 symbol = "s"
             else:
-                # UNKNOWN - Yellow (default)
-                color = (255, 255, 0, 200)
+                affil = "unknown"
                 symbol = "o"  # circle
 
-            # Intensity modulation based on SNR
-            alpha = min(255, max(100, int(color[3] * min(1.0, blip.snr_db / 20.0))))
-            brushes.append(pg.mkBrush(color[0], color[1], color[2], alpha))
+            # Discrete SNR index (0-3) using cached brushes
+            snr_idx = min(3, max(0, int(blip.snr_db / 5.0)))
+            brushes.append(self._affiliation_brushes[affil][snr_idx])
             symbols.append(symbol)
 
         self.blip_scatter.setData(x, y, brush=brushes, symbol=symbols)
@@ -449,7 +469,7 @@ class PPIScope(QWidget):
                 self.selected_marker.setData([], [])
 
     def _update_phosphor(self):
-        """Update phosphor persistence display."""
+        """Update phosphor persistence display using pre-cached brush palette."""
         current_time = time.time()
 
         # Filter and fade historical blips
@@ -457,6 +477,8 @@ class PPIScope(QWidget):
         x_list = []
         y_list = []
         brushes = []
+        palette = self._phosphor_palette
+        n_palette = len(palette)
 
         for blip in self.blip_history:
             age = current_time - blip.creation_time
@@ -469,8 +491,11 @@ class PPIScope(QWidget):
                     x_list.append(blip.x)
                     y_list.append(blip.y)
 
-                    alpha = int(intensity * 150)
-                    brushes.append(pg.mkBrush(0, 180, 80, alpha))
+                    palette_idx = min(n_palette - 1, max(0, int(intensity * (n_palette - 0.01))))
+                    brushes.append(palette[palette_idx])
+
+        # Prune expired blips so history deque stays lean
+        self.blip_history = deque(valid_blips, maxlen=150)
 
         if x_list:
             self.phosphor_scatter.setData(x_list, y_list, brush=brushes)
@@ -478,58 +503,56 @@ class PPIScope(QWidget):
             self.phosphor_scatter.setData([], [])
 
     def _decay_phosphor(self):
-        """Timer callback to update phosphor decay."""
+        """Timer callback to update phosphor decay and noise overlay."""
         self._update_phosphor()
-        self._update_noise()  # Also update noise
+        self._update_noise()
 
-    def _update_noise(self):
-        """Update radar noise overlay for realistic CRT effect."""
-        # Generate Gaussian noise
+    def _init_noise_frames(self):
+        """Pre-compute realistic CRT phosphor noise frames for zero-allocation runtime display."""
         size = 100
-        noise = np.random.normal(0, 0.15, (size, size)).astype(np.float32)
-
-        # Create radial mask (more noise at edges where SNR is lower)
         center = size // 2
         y, x = np.ogrid[:size, :size]
         radial_dist = np.sqrt((x - center) ** 2 + (y - center) ** 2) / center
-
-        # Circular mask with edge boost
         circular_mask = radial_dist <= 1.0
-        edge_boost = 0.5 + 0.5 * radial_dist  # More noise at edges
+        edge_boost = 0.5 + 0.5 * radial_dist
 
-        noise = noise * circular_mask * edge_boost
-        noise = np.clip(noise, 0, 1)
+        self._noise_frames = []
+        for _ in range(6):
+            noise = np.random.normal(0, 0.15, (size, size)).astype(np.float32)
+            noise = np.clip(noise * circular_mask * edge_boost, 0, 1)
+            rgba = np.zeros((size, size, 4), dtype=np.uint8)
+            rgba[:, :, 1] = (noise * 100).astype(np.uint8)
+            rgba[:, :, 3] = (noise * 60).astype(np.uint8)
+            self._noise_frames.append(rgba)
+        self._noise_idx = 0
 
-        # Create green phosphor colormap
-        rgba = np.zeros((size, size, 4), dtype=np.uint8)
-        rgba[:, :, 1] = (noise * 100).astype(np.uint8)  # Green channel
-        rgba[:, :, 3] = (noise * 60).astype(np.uint8)  # Alpha
+    def _update_noise(self):
+        """Update radar noise overlay for realistic CRT effect by cycling pre-computed frames."""
+        if hasattr(self, "_noise_frames") and self._noise_frames:
+            self.noise_image.setImage(self._noise_frames[self._noise_idx])
+            self._noise_idx = (self._noise_idx + 1) % len(self._noise_frames)
 
-        self.noise_image.setImage(rgba)
-
-        # Scale to display range
-        r = self.max_range_km
-        self.noise_image.setRect(-r, -r, r * 2, r * 2)
+            r = self.max_range_km
+            self.noise_image.setRect(-r, -r, r * 2, r * 2)
 
     def _update_velocity_leaders(self, targets: List[Dict]):
-        """Draw velocity leader lines from targets."""
-        # Remove old leaders
-        for leader in self._velocity_leaders:
-            self.plot_widget.removeItem(leader)
-        self._velocity_leaders = []
+        """Draw velocity leader lines from targets using batched curve segments."""
+        hostile_x, hostile_y = [], []
+        friendly_x, friendly_y = [], []
+        other_x, other_y = [], []
 
         for target in targets:
             if not target.get("is_detected", False):
                 continue
 
+            velocity = target.get("velocity_mps", 0)
+            if velocity < 10:  # Skip slow targets
+                continue
+
             # Get target position and velocity
             range_km = target.get("range_km", 0)
             azimuth_rad = target.get("azimuth_rad", 0)
-            velocity = target.get("velocity_mps", 0)
             heading_rad = target.get("heading_rad", 0)
-
-            if velocity < 10:  # Skip slow targets
-                continue
 
             # Target position
             x = range_km * np.sin(azimuth_rad)
@@ -540,22 +563,22 @@ class PPIScope(QWidget):
             end_x = x + leader_len * np.sin(heading_rad)
             end_y = y + leader_len * np.cos(heading_rad)
 
-            # Get color based on affiliation
+            # Group by affiliation
             name = target.get("name", "").lower()
             if "bandit" in name or "hostile" in name:
-                color = (255, 68, 68, 150)
+                hostile_x.extend([x, end_x])
+                hostile_y.extend([y, end_y])
             elif "friendly" in name:
-                color = (0, 191, 255, 150)
+                friendly_x.extend([x, end_x])
+                friendly_y.extend([y, end_y])
             else:
-                color = (255, 255, 0, 150)
+                other_x.extend([x, end_x])
+                other_y.extend([y, end_y])
 
-            leader = pg.PlotCurveItem(
-                [x, end_x],
-                [y, end_y],
-                pen=pg.mkPen(color=color, width=1, style=Qt.PenStyle.DashLine),
-            )
-            self.plot_widget.addItem(leader)
-            self._velocity_leaders.append(leader)
+        if hasattr(self, "_leader_curves"):
+            self._leader_curves["hostile"].setData(hostile_x, hostile_y, connect="pairs")
+            self._leader_curves["friendly"].setData(friendly_x, friendly_y, connect="pairs")
+            self._leader_curves["other"].setData(other_x, other_y, connect="pairs")
 
     def set_max_range(self, range_km: float):
         """Set maximum display range."""

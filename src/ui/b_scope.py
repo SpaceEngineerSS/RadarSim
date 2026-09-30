@@ -79,8 +79,21 @@ class BScope(QWidget):
 
         # State
         self.blips: List[BScopeBlip] = []
-        self.blip_history: deque = deque(maxlen=200)
+        self.blip_history: deque = deque(maxlen=150)
+        self._last_blip_time: Dict[int, float] = {}
         self.last_update_time = time.time()
+
+        # Cached brush palettes
+        self._history_palette = [
+            pg.mkBrush(0, 100, 150, int(a))
+            for a in np.linspace(20, 100, 8)
+        ]
+        self._affiliation_brushes = {
+            "hostile": [pg.mkBrush(255, 68, 68, a) for a in [100, 140, 180, 230]],
+            "friendly": [pg.mkBrush(0, 191, 255, a) for a in [100, 140, 180, 230]],
+            "neutral": [pg.mkBrush(0, 255, 0, a) for a in [80, 120, 160, 200]],
+            "unknown": [pg.mkBrush(255, 255, 0, a) for a in [80, 120, 160, 200]],
+        }
 
         # Raster bar position (for visual effect)
         self.raster_position = 0.0  # 0 to 1 (top to bottom)
@@ -95,7 +108,7 @@ class BScope(QWidget):
         self.active_jammer_azimuths = []  # Jammer azimuth angles
 
         # Performance limiting
-        self._min_update_interval = 1.0 / 20.0  # 20 FPS
+        self._min_update_interval = 1.0 / 30.0  # 30 FPS
         self._last_frame_time = 0.0
 
         self._setup_ui()
@@ -280,7 +293,10 @@ class BScope(QWidget):
                 name=target.get("name", ""),
             )
             current_blips.append(blip)
-            self.blip_history.append(blip)
+            last_t = self._last_blip_time.get(target["id"], 0.0)
+            if current_time - last_t >= 0.2:
+                self.blip_history.append(blip)
+                self._last_blip_time[target["id"]] = current_time
 
             # Add to display lists
             az_list.append(azimuth_deg)
@@ -295,23 +311,16 @@ class BScope(QWidget):
                 or "hostile" in name_lower
                 or "enemy" in name_lower
             ):
-                # HOSTILE - Red
-                base_color = (255, 68, 68)
+                affil = "hostile"
             elif "friendly" in name_lower or "allied" in name_lower:
-                # FRIENDLY - Cyan
-                base_color = (0, 191, 255)
+                affil = "friendly"
             elif "neutral" in name_lower or "civilian" in name_lower:
-                # NEUTRAL - Green
-                base_color = (0, 255, 0)
+                affil = "neutral"
             else:
-                # UNKNOWN - Yellow
-                base_color = (255, 255, 0)
+                affil = "unknown"
 
-            # Intensity modulation based on SNR
-            alpha = min(230, max(100, int(180 * min(1.0, snr / 20.0))))
-            brushes.append(
-                pg.mkBrush(base_color[0], base_color[1], base_color[2], alpha)
-            )
+            snr_idx = min(3, max(0, int(snr / 5.0)))
+            brushes.append(self._affiliation_brushes[affil][snr_idx])
 
         self.blips = current_blips
 
@@ -372,22 +381,28 @@ class BScope(QWidget):
             strobe.setVisible(True)
 
     def _update_history(self, current_time: float):
-        """Update historical blip display with fading effect."""
+        """Update historical blip display with fading effect using cached palette."""
         decay_time = 3.0  # seconds
 
+        valid_blips = []
         az_list = []
         range_list = []
         brushes = []
+        palette = self._history_palette
+        n_palette = len(palette)
 
         for blip in self.blip_history:
             age = current_time - blip.creation_time
             if age < decay_time:
                 intensity = np.exp(-age / (decay_time / 2))
                 if intensity > 0.1:
+                    valid_blips.append(blip)
                     az_list.append(blip.azimuth_deg)
                     range_list.append(blip.range_km)
-                    alpha = int(intensity * 100)
-                    brushes.append(pg.mkBrush(0, 100, 150, alpha))
+                    p_idx = min(n_palette - 1, max(0, int(intensity * (n_palette - 0.01))))
+                    brushes.append(palette[p_idx])
+
+        self.blip_history = deque(valid_blips, maxlen=150)
 
         if az_list:
             self.history_scatter.setData(az_list, range_list, brush=brushes)
