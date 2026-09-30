@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "radarsim"
-version = "3.0.0"
+version = "3.0.1"
 description = "Physics-based radar simulation, signal processing, tracking, ECM, and radar imaging"
 readme = "README.md"
 license = "MIT"

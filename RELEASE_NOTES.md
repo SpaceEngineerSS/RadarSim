@@ -1,17 +1,14 @@
-# RadarSim 3.0.0
+# RadarSim 3.0.1
 
-RadarSim 3.0 is a scientific-model and signal-chain revision. The release focuses on traceable equations, calibrated statistical processing, explicit timing/covariance semantics, and honest model boundaries.
+RadarSim 3.0.1 is a maintenance and stability release resolving scenario execution edge cases, dynamic parameter synchronization, and command-line scenario loading.
 
-The pulse-Doppler path now starts with delayed complex LFM echoes and performs linear matched filtering, optional MTI, windowed Doppler processing, physical range/velocity axes, and ambiguity reporting. CFAR thresholds are calibrated separately for CA, GO, SO, and OS detectors; two-dimensional CA-CFAR uses a true rectangular reference ring.
+## Highlights in 3.0.1
 
-Tracking now uses chi-square innovation gating and Hungarian global assignment with exact confirmation/coasting rules. Network estimates are timestamp-aligned before fusion. Independent measurements and unknown-correlated tracks use separate information-fusion and covariance-intersection paths.
-
-The physics engine includes corrected link/noise accounting, ITU-R gas and rain loss, Oh bare-soil and NRL sea-clutter reflectivity, statistical clutter, DRFM pull-off, and receiver hard-limiting diagnostics. SAR raw data and range-Doppler focusing now use actual phase history, range gating, and non-circular RCMC; ISAR uses compressed, aligned profiles and a rotation-rate-derived cross-range axis.
-
-Obsolete optional modules and binary assets have been removed. RadarSim has no telemetry or remote-service dependency.
-
-This release intentionally reports omega-k and chirp-scaling SAR processing as unimplemented. It also does not claim hardware-certified performance, real-platform signatures, refractive ray tracing, multipath, CAD electromagnetic scattering, or classified equipment behaviour. See `docs/MODEL_FIDELITY.md` before interpreting simulation results.
-
-Verification for the source release: 341 automated tests, strict Ruff checks, offscreen PySide6 smoke tests, Bandit medium/high-severity scan, Sphinx warnings-as-errors build, and wheel/source-distribution build.
-
-Breaking changes include removal of obsolete modules/assets, corrected signal calibration and axes, stricter input validation, and revised fusion/tracking lifecycle semantics. Existing scripts should pin 2.4.0 until their assumptions are checked against the 3.0 documentation.
+- **Sub-1GHz Attenuation Safety:** Guarded ITU-R P.676 atmospheric absorption and ITU-R P.838 rain attenuation for frequencies below 1.0 GHz (such as UHF/VHF early warning radars), applying negligible 0.0 dB attenuation rather than raising an out-of-domain exception. Resolves crashes in `stealth_deep_penetration.yaml`.
+- **Terrain Type Normalization:** Added `"mountain"` alias and normalization in `ClutterModel.ground_clutter_sigma0` to match scenario specifications. Resolves crash in `mountain_ambush.yaml`.
+- **Dynamic Radar Parameter Synchronization:** Converted `SimulationEngine._radar_params` to a real-time property synchronized with `self.radar`, ensuring GUI frequency/power slider changes immediately affect SNR and detection calculations.
+- **Command-Line Scenario Loading:** `python run_gui.py [scenario_path]` and `radarsim [scenario_path]` now accept a scenario YAML/JSON file path directly on startup.
+- **GUI File Filter:** Added `*.json` to `QFileDialog` scenario open filter alongside `*.yaml`/`*.yml`.
+- **Public Scenario API:** Added `MainWindow.load_scenario(filepath)` for modular and programmatic scenario loading.
+- **Windows Console Encoding:** Replaced Unicode arrow and lambda characters in console logging to prevent `UnicodeEncodeError` on CP1252/CP1254 environments.
+- **Automated Verification:** Added regression tests executing multi-step simulation on all distributed scenarios. Full test suite: 343 passing tests.

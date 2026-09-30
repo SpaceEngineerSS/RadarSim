@@ -2,6 +2,22 @@
 
 RadarSim follows [Semantic Versioning](https://semver.org/). Dates use ISO 8601.
 
+## [3.0.1] - 2026-09-30
+
+Patch release resolving scenario execution edge cases, dynamic parameter synchronization, and command-line scenario loading.
+
+### Fixed
+- **Sub-1GHz Attenuation Safety:** Guarded ITU-R P.676 atmospheric absorption and ITU-R P.838 rain attenuation for frequencies below 1.0 GHz, returning 0.0 dB rather than raising an out-of-domain exception. Resolves crashes in `stealth_deep_penetration.yaml`.
+- **Terrain Type Normalization:** Added `"mountain"` alias and normalization in `ClutterModel.ground_clutter_sigma0` to match scenario specifications. Resolves crash in `mountain_ambush.yaml`.
+- **Dynamic Radar Parameter Synchronization:** Converted `SimulationEngine._radar_params` to a real-time property synchronized with `self.radar`, ensuring GUI frequency/power slider changes immediately affect SNR and detection calculations.
+- **Windows Console Encoding:** Replaced Unicode arrow and lambda characters in console logging to prevent `UnicodeEncodeError` on CP1252/CP1254 environments.
+
+### Added
+- **Command-Line Scenario Loading:** `python run_gui.py [scenario_path]` and `radarsim [scenario_path]` now accept a scenario YAML/JSON file path directly on startup.
+- **GUI File Filter:** Added `*.json` to `QFileDialog` scenario open filter alongside `*.yaml`/`*.yml`.
+- **Public API:** Added `MainWindow.load_scenario(filepath)` for modular and programmatic scenario loading.
+- **Automated Scenario Verification:** Added regression test executing multi-step simulation on all distributed scenarios.
+
 ## [3.0.0] - 2026-08-20
 
 This release replaces several approximate or placeholder paths with physically traceable implementations. It is a major release because signal-array shapes and calibration, tracking/fusion semantics, imaging behaviour, package metadata, and removed modules can affect existing callers.
@@ -57,6 +73,7 @@ This release replaces several approximate or placeholder paths with physically t
 
 - Initial open-source radar equation, target simulation, tracking, ECM, visualization, and export release.
 
+[3.0.1]: https://github.com/SpaceEngineerSS/RadarSim/releases/tag/v3.0.1
 [3.0.0]: https://github.com/SpaceEngineerSS/RadarSim/releases/tag/v3.0.0
 [2.4.0]: https://github.com/SpaceEngineerSS/RadarSim/releases/tag/v2.4.0
 [1.0.0]: https://github.com/SpaceEngineerSS/RadarSim/releases/tag/v1.0.0

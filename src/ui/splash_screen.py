@@ -21,7 +21,7 @@ class RadarSimSplash(QSplashScreen):
     Displays loading progress with stage messages.
     """
 
-    VERSION = "3.0.0"
+    VERSION = "3.0.1"
 
     STAGES = [
         "Initializing Core Systems...",
