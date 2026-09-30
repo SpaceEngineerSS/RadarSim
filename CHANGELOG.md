@@ -7,12 +7,15 @@ RadarSim follows [Semantic Versioning](https://semver.org/). Dates use ISO 8601.
 Patch release resolving scenario execution edge cases, dynamic parameter synchronization, and command-line scenario loading.
 
 ### Fixed
+- **Phosphor Persistence Rendering Freeze:** Replaced on-the-fly QPainter brush creation with a pre-cached discrete brush palette in PPI Scope and B-Scope, eliminating GUI freezing at startup and speeding up phosphor updates from 117 ms to 0.5 ms.
 - **Sub-1GHz Attenuation Safety:** Guarded ITU-R P.676 atmospheric absorption and ITU-R P.838 rain attenuation for frequencies below 1.0 GHz, returning 0.0 dB rather than raising an out-of-domain exception. Resolves crashes in `stealth_deep_penetration.yaml`.
 - **Terrain Type Normalization:** Added `"mountain"` alias and normalization in `ClutterModel.ground_clutter_sigma0` to match scenario specifications. Resolves crash in `mountain_ambush.yaml`.
 - **Dynamic Radar Parameter Synchronization:** Converted `SimulationEngine._radar_params` to a real-time property synchronized with `self.radar`, ensuring GUI frequency/power slider changes immediately affect SNR and detection calculations.
 - **Windows Console Encoding:** Replaced Unicode arrow and lambda characters in console logging to prevent `UnicodeEncodeError` on CP1252/CP1254 environments.
 
 ### Added
+- **Scenario-Bundled Distribution:** Bundled the `scenarios/` directory in release ZIP/TAR.GZ archives so standalone executables have immediate access to all 10 scenario definitions.
+- **Built-in Scenarios Menu:** Added `File > ⚡ Built-in Scenarios` menu for instant one-click scenario launching without manual file browsing.
 - **Command-Line Scenario Loading:** `python run_gui.py [scenario_path]` and `radarsim [scenario_path]` now accept a scenario YAML/JSON file path directly on startup.
 - **GUI File Filter:** Added `*.json` to `QFileDialog` scenario open filter alongside `*.yaml`/`*.yml`.
 - **Public API:** Added `MainWindow.load_scenario(filepath)` for modular and programmatic scenario loading.
