@@ -342,86 +342,6 @@ class ECMSimulator:
         inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_db / 10.0)
         return float(-10.0 * np.log10(inverse_sjnr))
 
-    def generate_noise_strobes(
-        self,
-        n_range_bins: int,
-        n_azimuth_bins: int,
-        jammer_azimuth_deg: float,
-        jsr_db: float,
-    ) -> np.ndarray:
-        """
-        Generate noise jamming strobes for display.
-
-        Creates radial strobe pattern from jammer direction.
-        OPTIMIZED: Limits array size and uses efficient generation.
-
-        Args:
-            n_range_bins: Number of range bins (capped at 100)
-            n_azimuth_bins: Number of azimuth bins (capped at 72)
-            jammer_azimuth_deg: Jammer bearing from radar
-            jsr_db: Jam-to-Signal ratio [dB]
-
-        Returns:
-            2D array of jamming returns [range x azimuth]
-        """
-        # ═══ PERFORMANCE: Cap array size ═══
-        n_range_bins = min(n_range_bins, 100)
-        n_azimuth_bins = min(n_azimuth_bins, 72)
-
-        strobes = np.zeros((n_range_bins, n_azimuth_bins), dtype=np.float32)
-
-        if jsr_db < 0:
-            return strobes  # No visible jamming
-
-        # Calculate strobe width based on jammer power (cap at 30 deg)
-        strobe_width = min(30, int(5 + jsr_db / 3))  # degrees
-
-        # Azimuth bin of jammer
-        jammer_bin = int((jammer_azimuth_deg % 360) / 360 * n_azimuth_bins)
-
-        # Create strobe pattern - OPTIMIZED: vectorized
-        intensity = min(1.0, jsr_db / 30)
-        half_width = strobe_width * n_azimuth_bins // 720  # Convert degrees to bins
-
-        # Pre-generate noise for affected bins only (not full array)
-        for i in range(-half_width, half_width + 1):
-            az_bin = (jammer_bin + i) % n_azimuth_bins
-            # Use pre-generated uniform noise instead of exponential (faster)
-            strobes[:, az_bin] = intensity * (
-                0.25 + 0.5 * np.random.random(n_range_bins)
-            )
-
-        return strobes
-
-    def apply_jamming_to_signal(
-        self, signal_db: np.ndarray, jsr_db: float, noise_floor_db: float = -60.0
-    ) -> np.ndarray:
-        """
-        Apply jamming effects to received signal.
-
-        Args:
-            signal_db: Original signal [dB]
-            jsr_db: Jam-to-Signal ratio [dB]
-            noise_floor_db: Receiver noise floor [dB]
-
-        Returns:
-            Jammed signal [dB]
-        """
-        if jsr_db < 0:
-            return signal_db
-
-        # Elevated noise floor due to jamming
-        jammed_floor = noise_floor_db + max(0, jsr_db - 10)
-
-        # Add noise proportional to JSR
-        noise_std = min(10, jsr_db / 3)
-        jamming_noise = np.random.normal(0, noise_std, len(signal_db))
-
-        # Mask signal with elevated noise
-        jammed = np.maximum(signal_db, jammed_floor + jamming_noise)
-
-        return jammed
-
     def update(self, dt: float, current_time: float) -> None:
         """Update all ECM elements."""
         # Update chaff clouds
@@ -461,7 +381,9 @@ class ECMSimulator:
 
         Reference: Schleher (1999), Eq. 4.5
 
-        R_bt = sqrt((Pt * Gt * σ) / (Pj * Gj * 4π * SNR_req * Bj/Br))
+        Self-screening jammer: S/J = Pt·Gt·σ·Bj / (4π·R²·Pj·Gj·Br) = SNR_req, so
+        R_bt = sqrt((Pt · Gt · σ) / (Pj · Gj · 4π · SNR_req · Br/Bj)),
+        with Br/Bj capped at 1 when the jammer is narrower than the receiver.
 
         Args:
             radar_power_watts: Radar peak power [W]
@@ -709,8 +631,9 @@ class DRFMJammer:
             false_velocity_mps = true_velocity_mps
         else:  # VGPO
             false_range_m = true_range_m
+            # A Doppler offset dfd moves the apparent radial velocity by -dfd*lambda/2.
             false_velocity_mps = (
-                true_velocity_mps + self._pull_offset_hz * wavelength_m / 2.0
+                true_velocity_mps - self._pull_offset_hz * wavelength_m / 2.0
             )
 
         # J/S gain: jammer is stronger than skin return
@@ -723,7 +646,8 @@ class DRFMJammer:
 
         # Doppler phase for false target (phase-coherent with radar LFM)
         n_idx = np.arange(n_pulses, dtype=np.float64)
-        doppler_phase = 4.0 * np.pi * false_velocity_mps * n_idx * pri_s / wavelength_m
+        # Same convention as PulseDopplerProcessor: fd = -2 v_r / lambda.
+        doppler_phase = -4.0 * np.pi * false_velocity_mps * n_idx * pri_s / wavelength_m
         steering = jammer_amplitude * np.exp(1j * doppler_phase)
 
         # Inject false return at offset range bin
@@ -780,48 +704,25 @@ class DRFMJammer:
         }
 
 
-def calculate_jamming_effectiveness(
-    jsr_db: float, detection_threshold_db: float = 13.0
-) -> float:
-    """
-    Calculate jamming effectiveness as probability of mask.
-
-    Reference: Schleher (1999), Chapter 5
-
-    Args:
-        jsr_db: Jam-to-Signal ratio [dB]
-        detection_threshold_db: Required SNR for detection [dB]
-
-    Returns:
-        Probability that jamming masks the target (0-1)
-    """
-    margin = jsr_db - detection_threshold_db
-    # Sigmoid around the threshold
-    return 1.0 / (1.0 + np.exp(-margin / 3.0))
-
-
 def validate_burn_through_range() -> dict:
     """
-    Validate burn-through range against textbook example.
+    Self-consistency check of the self-screening burn-through range.
 
-    Reference: Schleher (1999), Example 4.1
+    At R_bt the signal-to-jamming ratio from ``calculate_jsr`` must equal the
+    required SNR, i.e. JSR(R_bt) = -SNR_req [dB]; inside R_bt the radar burns
+    through (JSR lower), outside it is jammed.
 
-    Setup:
-        - Radar: Pt = 100 kW, G = 35 dB
-        - Jammer: Pj = 1 kW, Gj = 6 dBi, Bj = 100 MHz
-        - Target: σ = 1 m², Required SNR = 13 dB
-        - Radar BW = 1 MHz
+    Setup: Pt = 100 kW, Gt = 35 dB, Pj = 1 kW ERP, Gj = 6 dBi, Bj = 100 MHz,
+    Br = 1 MHz, sigma = 1 m^2, SNR_req = 13 dB.
 
-    Returns:
-        Validation result dictionary
+    Reference: Schleher (1999), Sec. 4.2 (self-screening jammer equation)
     """
-    # Parameters
-    radar_power = 100e3  # 100 kW
+    radar_power = 100e3
     radar_gain_db = 35.0
     radar_gain = 10 ** (radar_gain_db / 10)
     radar_bw = 1e6
 
-    jammer_power = 1000.0  # 1 kW
+    jammer_power = 1000.0
     jammer_gain_db = 6.0
     jammer_gain = 10 ** (jammer_gain_db / 10)
     jammer_bw = 100e6
@@ -830,7 +731,6 @@ def validate_burn_through_range() -> dict:
     snr_db = 13.0
     snr_linear = 10 ** (snr_db / 10)
 
-    # Create simulator and calculate
     sim = ECMSimulator(radar_wavelength=0.03)
     r_bt = sim.calculate_burn_through_range(
         radar_power_watts=radar_power,
@@ -843,29 +743,46 @@ def validate_burn_through_range() -> dict:
         jammer_bandwidth_hz=jammer_bw,
     )
 
-    r_bt_km = r_bt / 1000.0
+    def jsr_at(range_m: float) -> float:
+        position = np.array([range_m, 0.0, 0.0])
+        return sim.calculate_jsr(
+            radar_pos=np.zeros(3),
+            target_pos=position,
+            jammer_pos=position,
+            radar_power=radar_power,
+            radar_gain=radar_gain,
+            jammer_power=jammer_power,
+            target_rcs=target_rcs,
+            radar_bandwidth=radar_bw,
+            jammer_bandwidth=jammer_bw,
+            jammer_gain=jammer_gain,
+        )
 
-    # Expected: 15-30 km for these parameters
-    expected_min_km = 10.0
-    expected_max_km = 35.0
-    is_valid = expected_min_km <= r_bt_km <= expected_max_km
+    jsr_at_burn_through_db = jsr_at(r_bt)
+    is_valid = (
+        abs(jsr_at_burn_through_db + snr_db) < 0.01
+        and jsr_at(0.5 * r_bt) < -snr_db
+        and jsr_at(2.0 * r_bt) > -snr_db
+    )
 
     return {
         "test_name": "Burn-Through Range Validation",
-        "reference": "Schleher (1999), Chapter 4",
+        "reference": "Schleher (1999), Sec. 4.2",
         "inputs": {
             "radar_power_kw": radar_power / 1000,
             "radar_gain_db": radar_gain_db,
             "jammer_power_kw": jammer_power / 1000,
             "jammer_gain_dbi": jammer_gain_db,
             "target_rcs_m2": target_rcs,
+            "required_snr_db": snr_db,
         },
         "results": {
             "burn_through_range_m": r_bt,
-            "burn_through_range_km": r_bt_km,
+            "burn_through_range_km": r_bt / 1000.0,
+            "jsr_at_burn_through_db": jsr_at_burn_through_db,
         },
         "validation": {
-            "expected_range_km": f"{expected_min_km}-{expected_max_km}",
+            "expected_jsr_db": -snr_db,
             "is_valid": is_valid,
         },
     }
@@ -877,5 +794,5 @@ if __name__ == "__main__":
     print("\n=== ECM Validation ===")
     print(f"Test: {result['test_name']}")
     print(f"Burn-through range: {result['results']['burn_through_range_km']:.2f} km")
-    print(f"Expected: {result['validation']['expected_range_km']} km")
+    print(f"J/S at burn-through: {result['results']['jsr_at_burn_through_db']:.2f} dB")
     print(f"Valid: {'✓ PASS' if result['validation']['is_valid'] else '✗ FAIL'}")

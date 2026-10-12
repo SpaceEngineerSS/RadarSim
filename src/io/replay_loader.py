@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import h5py
 import numpy as np
 
+from src.physics.geometry import polar_from_enu
+
 
 def _parse_target_id(raw: Any) -> Union[int, str]:
     """Normalize a recorded target ID: integers stay integers, others stay text."""
@@ -158,6 +160,7 @@ class ReplayLoader:
             int, Dict
         ] = {}  # id -> {positions, velocities, metadata}
         self._measurements: Optional[Dict[str, np.ndarray]] = None
+        self._radar_position = np.zeros(3)  # ENU; recordings may override it
         self.metadata: Optional[ReplayMetadata] = None
 
         self._open_file()
@@ -190,6 +193,14 @@ class ReplayLoader:
                 "radar_power_watts", config.attrs.get("power_watts", 100e3)
             )
             max_range_km = config.attrs.get("max_range_km", 150.0)
+            radar_position = config.attrs.get("radar_position_m")
+            if radar_position is not None:
+                self._radar_position = np.asarray(
+                    json.loads(radar_position)
+                    if isinstance(radar_position, (str, bytes))
+                    else radar_position,
+                    dtype=np.float64,
+                )
 
         # Load target data
         targets_group = self._file.get("targets", None)
@@ -391,12 +402,9 @@ class ReplayLoader:
             else:
                 velocity = np.zeros(3)
 
-            # Calculate range and azimuth
-            range_m = np.linalg.norm(position)
-            azimuth_rad = np.arctan2(position[1], position[0])  # East from North
-            azimuth_deg = np.degrees(azimuth_rad)
-            if azimuth_deg < 0:
-                azimuth_deg += 360
+            # Range and azimuth (clockwise from North) relative to the radar
+            range_m, azimuth_rad, _ = polar_from_enu(position - self._radar_position)
+            azimuth_deg = np.degrees(azimuth_rad) % 360.0
 
             # Get measurement data if available
             meas = measurement_lookup.get(target_id, {})

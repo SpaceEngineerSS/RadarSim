@@ -12,12 +12,15 @@ Features:
 Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 2
 """
 
+import copy
+import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from src.physics.atmospheric import ITU_R_P676
+from src.physics.geometry import azimuth_from_enu, enu_from_polar, wrap_to_pi
 from src.physics.ecm import (
     DRFMConfig,
     DRFMJammer,
@@ -33,6 +36,7 @@ from src.physics.radar_equation import (
 )
 from src.physics.rain import ITU_R_P838
 from src.physics.rcs import SwerlingModel
+from src.tracking.monopulse import MonopulseEstimator
 
 from .objects import MotionModel, Radar, SimulationState, Target
 
@@ -102,6 +106,8 @@ class DetectionResult:
     is_detected: bool
     pd: float  # Probability of detection
 
+    illuminated: bool = True  # Beam swept the target during this step
+    terrain_masked: bool = False
     atmospheric_loss_db: float = 0.0
     rain_attenuation_db: float = 0.0
     surface_clutter_loss_db: float = 0.0
@@ -130,6 +136,8 @@ class DetectionResult:
             "snr_db": self.snr_db,
             "is_detected": self.is_detected,
             "pd": self.pd,
+            "illuminated": self.illuminated,
+            "terrain_masked": self.terrain_masked,
             "atmospheric_loss_db": self.atmospheric_loss_db,
             "rain_attenuation_db": self.rain_attenuation_db,
             "surface_clutter_loss_db": self.surface_clutter_loss_db,
@@ -224,6 +232,28 @@ class SimulationLog:
         return [r for r in self.detection_history if r.target_id == target_id]
 
 
+# Euclidean pre-gate for confirmed-track association [m]; the chi-square gate
+# does the statistical work, this only bounds the search.
+TRACK_GATE_DISTANCE_M = 5000.0
+
+# SNR reported for a target hidden by terrain [dB].
+MASKED_SNR_DB = -100.0
+
+# Rain height h_R = h_0 + 0.36 km with a mid-latitude 0 deg C isotherm h_0 = 3 km.
+# Reference: ITU-R P.839-4.
+DEFAULT_RAIN_HEIGHT_M = 3360.0
+
+# Clutter velocity spread sigma_v: wooded land in light wind and sea clutter.
+# Reference: Nathanson, "Radar Design Principles", 2nd Ed., Table 7.5 / Ch. 7.
+LAND_CLUTTER_SIGMA_V_MPS = 0.25
+SEA_CLUTTER_SIGMA_V_MPS = 1.0
+
+# The simple engine MTI is a two-pulse (single delay-line) canceller.
+MTI_CANCELLER_ORDER = 1
+
+# Frequency-agile band the barrage jammer must cover, as a carrier fraction.
+FREQUENCY_AGILITY_BANDWIDTH_FRACTION = 0.1
+
 # Oh-1992 bare-soil model validity: 10-70 deg incidence = 20-80 deg grazing.
 OH1992_MIN_GRAZING_RAD = np.radians(20.0)
 OH1992_MAX_GRAZING_RAD = np.radians(80.0)
@@ -262,6 +292,10 @@ class SimulationEngine:
         land_gamma_db: Optional[float] = None,
         ground_relative_permittivity: complex = complex(8.0, -0.8),
         ground_rms_height_m: float = 0.01,
+        seed: Optional[int] = None,
+        scan_gated_detection: bool = True,
+        rain_height_m: float = DEFAULT_RAIN_HEIGHT_M,
+        clutter_velocity_spread_mps: Optional[float] = None,
     ):
         """
         Initialize simulation engine.
@@ -278,7 +312,7 @@ class SimulationEngine:
             probability_false_alarm: Probability of false alarm per resolution cell
             pulses_integrated: Pulses integrated by the square-law detector
             atmospheric_temperature_c: Path temperature [degrees Celsius]
-            atmospheric_pressure_hpa: Path pressure [hPa]
+            atmospheric_pressure_hpa: Barometric (total) path pressure [hPa]
             water_vapor_density_g_m3: Water-vapor density [g/m^3]
             enable_clutter: Enable surface and volume clutter losses
             terrain_type: Surface classification used by the clutter model
@@ -289,6 +323,11 @@ class SimulationEngine:
             land_gamma_db: Measured or calibrated gamma value for the gamma model [dB]
             ground_relative_permittivity: Passive complex soil permittivity eps'-j eps''
             ground_rms_height_m: RMS soil surface height used by Oh-1992 [m]
+            seed: Seed for every random draw (None = non-reproducible)
+            scan_gated_detection: Detect a target only while the beam sweeps it
+            rain_height_m: Top of the rain layer (ITU-R P.839) [m]
+            clutter_velocity_spread_mps: Clutter spectrum std-dev for MTI
+                (None = land/sea default by terrain type)
         """
         if dt <= 0.0:
             raise ValueError("dt must be greater than zero")
@@ -309,10 +348,26 @@ class SimulationEngine:
             raise ValueError("ground_relative_permittivity must use eps'-j eps''")
         if ground_rms_height_m <= 0.0:
             raise ValueError("ground_rms_height_m must be greater than zero")
+        if rain_height_m <= 0.0:
+            raise ValueError("rain_height_m must be greater than zero")
+        if clutter_velocity_spread_mps is not None and clutter_velocity_spread_mps <= 0.0:
+            raise ValueError("clutter_velocity_spread_mps must be positive")
 
         self.radar = radar
         self.targets = targets or []
         self.dt = dt
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
+        self.scan_gated_detection = scan_gated_detection
+        self.rain_height_m = rain_height_m
+        self.clutter_velocity_spread_mps = clutter_velocity_spread_mps
+
+        # Snapshots for reset()
+        self._initial_radar_state = copy.deepcopy(radar.state)
+        self._initial_antenna_azimuth = radar.antenna_azimuth
+        self._initial_target_states = {
+            target.target_id: copy.deepcopy(target.state) for target in self.targets
+        }
         self.enable_atmospheric = enable_atmospheric
         self.detection_threshold_db = detection_threshold_db
         self.range_noise_std = range_noise_std_m
@@ -354,13 +409,17 @@ class SimulationEngine:
         self._drfm_jammers: Dict[int, DRFMJammer] = {}
 
         # ═══ TRACK-WHILE-SCAN (TWS) ═══
+        # Last full evaluation per target, reused between beam passes
+        self._last_looks: Dict[int, DetectionResult] = {}
+
+        self.tracks: list = []
         if TRACKING_AVAILABLE:
             self.track_manager = TrackManager(
-                gate_distance=500.0,  # Association gate [m]
-                max_misses=5,  # Coast before delete
-                confirm_hits=3,  # Hits to confirm
-                process_noise=5.0,  # Maneuver responsiveness
-                measurement_noise=50.0,  # Radar noise
+                gate_distance=TRACK_GATE_DISTANCE_M,
+                max_misses=3,  # Missed scans before a confirmed track is dropped
+                confirm_hits=3,  # Consecutive scan hits to confirm
+                process_noise=5.0,  # Maneuver responsiveness [m/s^2]
+                measurement_noise=max(range_noise_std_m, 1.0),
             )
             self.enable_tracking = True
         else:
@@ -405,8 +464,9 @@ class SimulationEngine:
         self.frequency_agility_enabled = False
         self.base_frequency_hz = radar.frequency_hz  # Store original frequency
 
-        # Monopulse angle tracking
+        # Monopulse angle measurement (replaces the fixed angle noise when enabled)
         self.monopulse_enabled = False
+        self._monopulse: Optional[MonopulseEstimator] = None
 
         # Frame counter for throttled signal processing and display updates
         self._frame_count = 0
@@ -426,12 +486,13 @@ class SimulationEngine:
         """Add a target to the simulation."""
         self.targets.append(target)
         self.state.add_target(target)
+        self._initial_target_states[target.target_id] = copy.deepcopy(target.state)
 
     def set_pulse_doppler_mode(
         self,
         enabled: bool,
         n_pulses: int = 64,
-        prf_hz: float = 1000.0,
+        prf_hz: Optional[float] = None,
         mti_order: int = 0,
     ) -> None:
         """
@@ -443,11 +504,13 @@ class SimulationEngine:
         Args:
             enabled: Enable pulse-Doppler processing
             n_pulses: Pulses per CPI (slow-time dimension)
-            prf_hz: Pulse repetition frequency [Hz]
+            prf_hz: Pulse repetition frequency [Hz] (None = the radar's PRF)
             mti_order: MTI canceller order (0=off, 1=2-pulse, 2=3-pulse)
 
         Reference: Richards (2005), "Fundamentals of Radar Signal Processing"
         """
+        if prf_hz is None:
+            prf_hz = self.radar.prf_hz
         self.pulse_doppler_enabled = enabled and PULSE_DOPPLER_AVAILABLE
         self._pd_n_pulses = n_pulses
         self._pd_prf_hz = prf_hz
@@ -498,19 +561,20 @@ class SimulationEngine:
             if r_m < 100.0 or r_m > self._pd_processor.max_instrumented_range_m:
                 continue
 
-            # Check if target is within ±beamwidth of current antenna pointing
-            az_diff = abs(geom["azimuth_rad"] - self.radar.antenna_azimuth)
-            if az_diff > np.pi:
-                az_diff = 2 * np.pi - az_diff
-            if az_diff > self.radar.beamwidth_rad * 2.0:
-                continue  # Target not illuminated by beam
+            # Only targets inside the main lobe contribute to this CPI
+            az_diff = abs(wrap_to_pi(geom["azimuth_rad"] - self.radar.antenna_azimuth))
+            if az_diff > self.radar.beamwidth_rad:
+                continue
 
-            # Amplitude from radar equation (simplified)
-            snr_lin = max(
-                10 ** (self.state.snr_values.get(target.target_id, 0.0) / 10.0),
-                1e-6,
+            # Single-pulse SNR from the radar equation, coherently integrated
+            # over the CPI (gain N; the window loss is applied by the processor).
+            single_pulse_snr = max(
+                10 ** (self.state.snr_values.get(target.target_id, MASKED_SNR_DB) / 10.0),
+                1e-12,
             )
-            amplitude = self._pd_processor.amplitude_for_output_snr(snr_lin)
+            amplitude = self._pd_processor.amplitude_for_output_snr(
+                single_pulse_snr * self._pd_processor.n_pulses
+            )
 
             ranges_m.append(r_m)
             velocities_mps.append(geom["radial_velocity_mps"])
@@ -524,6 +588,7 @@ class SimulationEngine:
             else np.array([]),
             target_amplitudes=np.array(amplitudes) if amplitudes else np.array([]),
             noise_power=1.0,
+            seed=int(self.rng.integers(0, 2**31 - 1)),
         )
 
     def set_ecm_mode(self, active: bool, ecm_type: str = "noise") -> None:
@@ -611,27 +676,27 @@ class SimulationEngine:
             # CHAFF: Deploy 3-5 slow-moving dipole clouds
             # Physics: Chaff falls slowly (wind drift ~5 m/s), RCS ~5-10 m²
             # Key: Velocity drops to near-zero, separates from fast aircraft
-            n_clouds = np.random.randint(3, 6)
+            n_clouds = int(self.rng.integers(3, 6))
 
             for i in range(n_clouds):
                 # Random offset from parent (within 500m sphere)
-                offset = np.random.uniform(-300, 300, 3)
-                offset[2] = -abs(offset[2]) * 0.3  # Chaff tends to fall
+                offset = self.rng.uniform(-300, 300, 3)
+                offset[2] = -abs(offset[2]) * 0.3  # Chaff tends to fall (z is up)
 
                 # Wind drift velocity - CRITICAL: near-zero velocity!
                 # This makes chaff appear stationary on Doppler display
                 wind_vel = np.array(
                     [
-                        np.random.uniform(-3, 3),  # Slow horizontal drift
-                        np.random.uniform(-3, 3),
-                        np.random.uniform(-1, -0.2),  # Slow falling
+                        self.rng.uniform(-3, 3),  # Slow horizontal drift
+                        self.rng.uniform(-3, 3),
+                        self.rng.uniform(-1, -0.2),  # Slow falling
                     ]
                 )
 
                 false_target = FalseTarget(
                     position=parent_target.position + offset,
                     velocity=wind_vel,  # Near-ZERO velocity (key difference from aircraft)
-                    rcs_m2=np.random.uniform(5.0, 12.0),  # Large blooming RCS
+                    rcs_m2=self.rng.uniform(5.0, 12.0),  # Large blooming RCS
                     ecm_type="chaff",
                     parent_target_id=parent_target.target_id,
                     creation_time=self.current_time,
@@ -661,7 +726,8 @@ class SimulationEngine:
                         ghost_velocity + radial_unit * jammer.config.pull_rate_mps
                     )
                 else:
-                    ghost_velocity = ghost_velocity + radial_unit * (
+                    # Doppler pull dfd shifts apparent radial velocity by -dfd*lambda/2.
+                    ghost_velocity = ghost_velocity - radial_unit * (
                         jammer.pull_offset_hz * self.radar.wavelength / 2.0
                     )
 
@@ -764,17 +830,68 @@ class SimulationEngine:
                 "false_target_count": len(self.false_targets),
             }
 
+    def _beam_swept(self, azimuth_rad: float) -> bool:
+        """
+        True if the beam centre crossed ``azimuth_rad`` during the last step.
+
+        Each azimuth is crossed exactly once per revolution, so every target gets
+        one detection opportunity (one dwell) per scan; the dwell's pulses are
+        represented by ``pulses_integrated``. A non-rotating (staring) antenna
+        illuminates whatever lies inside its main lobe.
+        """
+        if self.radar.scan_rate_rpm <= 0.0:
+            return abs(wrap_to_pi(azimuth_rad - self.radar.antenna_azimuth)) <= (
+                0.5 * self.radar.beamwidth_rad
+            )
+        swept = (self.radar.antenna_azimuth - self.radar.previous_antenna_azimuth) % (
+            2.0 * np.pi
+        )
+        if swept == 0.0:
+            return True  # a whole number of revolutions in one step
+        offset = (azimuth_rad - self.radar.previous_antenna_azimuth) % (2.0 * np.pi)
+        return 0.0 < offset <= swept
+
+    def _rain_path_length_m(self, radar_z: float, target_z: float, range_m: float) -> float:
+        """Length of the slant path below the rain height (ITU-R P.839 h_R)."""
+        low, high = min(radar_z, target_z), max(radar_z, target_z)
+        if high <= self.rain_height_m:
+            return range_m
+        if low >= self.rain_height_m:
+            return 0.0
+        return range_m * (self.rain_height_m - low) / (high - low)
+
+    def _monopulse_estimator(self) -> MonopulseEstimator:
+        beamwidth_deg = float(np.degrees(self.radar.beamwidth_rad))
+        if (
+            self._monopulse is None
+            or self._monopulse.beamwidth_deg != beamwidth_deg
+        ):
+            self._monopulse = MonopulseEstimator(beamwidth_deg=beamwidth_deg)
+        return self._monopulse
+
+    def _clutter_velocity_spread_mps(self) -> float:
+        if self.clutter_velocity_spread_mps is not None:
+            return self.clutter_velocity_spread_mps
+        is_water = "sea" in self.terrain_type.lower() or "water" in self.terrain_type.lower()
+        return SEA_CLUTTER_SIGMA_V_MPS if is_water else LAND_CLUTTER_SIGMA_V_MPS
+
     def step(self, dt: float = None) -> List[DetectionResult]:
         """
         Advance simulation by one time step.
 
-        This is the core of the simulation engine.
+        Per target: geometry, propagation losses, terrain masking, thermal SNR
+        from the aspect-dependent *mean* RCS, surface/volume clutter, noise
+        jamming and receiver limiting. The Swerling Pd then averages over the
+        RCS fluctuation, so the fluctuation is not sampled a second time. A
+        detection opportunity exists only while the rotating beam sweeps the
+        target (scan-gated); detected targets yield noisy range/angle
+        measurements that feed the track-while-scan tracker.
 
         Args:
             dt: Time step [s] (uses default if None)
 
         Returns:
-            List of DetectionResult for this time step
+            List of DetectionResult for this time step (one per target)
         """
         if dt is None:
             dt = self.dt
@@ -789,38 +906,66 @@ class SimulationEngine:
             for jammer in self._drfm_jammers.values():
                 jammer.step(dt)
 
-        # Increment frame counter for throttled operations
         self._frame_count += 1
+        freq_ghz = self.radar.frequency_hz / 1e9
+        radar_z = float(self.radar.position[2])
+        tracker_detections: List[Tuple[float, float]] = []
 
         # 2. Process each target
         for target in self.targets:
-            # Calculate geometry
             geom = self.radar.calculate_target_geometry(
                 target.position, target.velocity
             )
-
-            # Get target RCS with fluctuation
-            rcs = target.get_rcs(self.radar.position)
-
-            # Calculate atmospheric loss (ITU-R P.676 valid for 1-1000 GHz; negligible below 1 GHz)
-            atm_loss_db = 0.0
-            freq_ghz = self.radar.frequency_hz / 1e9
-            if self.enable_atmospheric and freq_ghz >= 1.0:
-                range_km = geom["range_m"] / 1000
-                if range_km > 0.1:
-                    atm_loss_db = ITU_R_P676.total_attenuation(
-                        range_km,
-                        freq_ghz,
-                        temperature_c=self.atmospheric_temperature_c,
-                        pressure_hpa=self.atmospheric_pressure_hpa,
-                        water_vapor_density=self.water_vapor_density_g_m3,
-                        two_way=True,
+            illuminated = (not self.scan_gated_detection) or self._beam_swept(
+                geom["azimuth_rad"]
+            )
+            previous = self._last_looks.get(target.target_id)
+            if not illuminated and previous is not None:
+                # The radar did not look at this target this step: its SNR is
+                # only re-measured on the next look (no new detection decision).
+                results.append(
+                    dataclasses.replace(
+                        previous,
+                        time=self.current_time,
+                        true_range_m=geom["range_m"],
+                        true_azimuth_rad=geom["azimuth_rad"],
+                        true_elevation_rad=geom["elevation_rad"],
+                        true_velocity_mps=geom["radial_velocity_mps"],
+                        measured_range_m=float("nan"),
+                        measured_azimuth_rad=float("nan"),
+                        measured_elevation_rad=float("nan"),
+                        is_detected=False,
+                        illuminated=False,
                     )
+                )
+                self.state.detections[target.target_id] = False
+                continue
+            range_m = geom["range_m"]
+            target_z = float(target.position[2])
+            rcs = target.mean_rcs(self.radar.position)
 
+            # Gaseous attenuation (ITU-R P.676 valid for 1-1000 GHz; negligible below)
+            atm_loss_db = 0.0
+            if self.enable_atmospheric and freq_ghz >= 1.0 and range_m > 100.0:
+                atm_loss_db = ITU_R_P676.total_attenuation(
+                    range_m / 1000.0,
+                    freq_ghz,
+                    temperature_c=self.atmospheric_temperature_c,
+                    pressure_hpa=ITU_R_P676.dry_air_pressure_hpa(
+                        self.atmospheric_pressure_hpa,
+                        self.atmospheric_temperature_c,
+                        self.water_vapor_density_g_m3,
+                    ),
+                    water_vapor_density=self.water_vapor_density_g_m3,
+                    two_way=True,
+                )
+
+            # Rain attenuation over the part of the path below the rain height
             rain_loss_db = 0.0
-            if self.rain_rate_mm_hr > 0.0 and geom["range_m"] > 100.0 and freq_ghz >= 1.0:
+            rain_path_m = self._rain_path_length_m(radar_z, target_z, range_m)
+            if self.rain_rate_mm_hr > 0.0 and rain_path_m > 100.0 and freq_ghz >= 1.0:
                 rain_loss_db = ITU_R_P838.path_attenuation(
-                    geom["range_m"] / 1000.0,
+                    rain_path_m / 1000.0,
                     freq_ghz,
                     self.rain_rate_mm_hr,
                     elevation_angle_deg=geom["elevation_deg"],
@@ -829,60 +974,46 @@ class SimulationEngine:
                 )
             propagation_loss_db = atm_loss_db + rain_loss_db
 
-            # ═══ TERRAIN MASKING CHECK (LOS) ═══
+            # Terrain masking (line of sight)
             terrain_masked = False
             if self.enable_terrain_masking and self.terrain is not None:
-                radar_pos_3d = np.array(
-                    [
-                        self.radar.position[0],
-                        self.radar.position[1],
-                        self.radar.position[2] if len(self.radar.position) > 2 else 0.0,
-                    ]
-                )
-                target_pos_3d = np.array(
-                    [
-                        target.position[0],
-                        target.position[1],
-                        target.position[2] if len(target.position) > 2 else 0.0,
-                    ]
-                )
-                is_visible, block_range, _ = self.terrain.check_line_of_sight(
-                    radar_pos_3d, target_pos_3d
+                is_visible, _, _ = self.terrain.check_line_of_sight(
+                    self.radar.position, target.position
                 )
                 terrain_masked = not is_visible
 
-            # Calculate SNR (terrain-masked targets get SNR = -inf)
             if terrain_masked:
-                snr_db = -100.0  # Effectively invisible
+                snr_db = MASKED_SNR_DB
                 signal_input_power_watts = None
             else:
                 snr_db = calculate_snr(
                     self._radar_params,
                     rcs,
-                    geom["range_m"],
+                    range_m,
                     atmospheric_loss_db=propagation_loss_db,
                 )
                 signal_input_power_watts = calculate_received_power(
                     self._radar_params,
                     rcs,
-                    geom["range_m"],
+                    range_m,
                     atmospheric_loss_db=propagation_loss_db,
                 )
 
+            # Surface clutter in the target's range cell, entering through the
+            # elevation pattern (beam pointed at the target) and reduced by MTI.
             clutter_snr_loss_db = 0.0
             surface_sigma0_db = None
             surface_cell_area_m2 = 0.0
             surface_clutter_rcs_m2 = 0.0
             surface_clutter_model = "disabled"
-            if self.clutter_enabled and CLUTTER_AVAILABLE and geom["range_m"] > 100:
-                radar_height_m = max(float(self.radar.position[2]), 0.0)
+            if self.clutter_enabled and CLUTTER_AVAILABLE and range_m > 100.0 and not terrain_masked:
+                radar_height_m = max(radar_z, 0.0)
                 # Surface-cell geometry is undefined at exactly normal incidence
                 # (radar overhead), so cap the grazing angle just below 90 deg.
                 geometric_grazing = min(
-                    np.arcsin(np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)),
+                    np.arcsin(np.clip(radar_height_m / range_m, 0.0, 1.0)),
                     np.radians(89.9),
                 )
-                freq_ghz = self.radar.frequency_hz / 1e9
                 is_water = (
                     "sea" in self.terrain_type.lower()
                     or "water" in self.terrain_type.lower()
@@ -945,13 +1076,28 @@ class SimulationEngine:
                 )
                 surface_sigma0_db = float(10.0 * np.log10(sigma0_linear))
                 surface_cell_area_m2 = ClutterModel.surface_resolution_cell_area(
-                    geom["range_m"],
+                    range_m,
                     self.radar.pulse_width_s,
                     self.radar.beamwidth_rad,
                     self.radar.beamwidth_el_rad,
                     model_grazing,
                 )
-                surface_clutter_rcs_m2 = sigma0_linear * surface_cell_area_m2
+                # The clutter patch lies at depression angle -grazing; the beam
+                # points at the target's elevation.
+                pattern_gain = ClutterModel.elevation_two_way_gain(
+                    geom["elevation_rad"] + geometric_grazing,
+                    self.radar.beamwidth_el_rad,
+                    self.radar.sidelobe_level_db,
+                )
+                surface_clutter_rcs_m2 = sigma0_linear * surface_cell_area_m2 * pattern_gain
+                if self.mti_enabled:
+                    improvement_db = ClutterModel.mti_improvement_factor_db(
+                        MTI_CANCELLER_ORDER,
+                        self.radar.prf_hz,
+                        self.radar.wavelength,
+                        self._clutter_velocity_spread_mps(),
+                    )
+                    surface_clutter_rcs_m2 *= 10.0 ** (-improvement_db / 10.0)
 
                 if surface_clutter_rcs_m2 > 0.0:
                     thermal_snr_db = snr_db
@@ -960,6 +1106,7 @@ class SimulationEngine:
                     )
                     clutter_snr_loss_db = thermal_snr_db - snr_db
 
+            # Noise jamming (self-screening)
             jammer_snr_loss_db = 0.0
             jsr_db = None
             active_ecm_type = (
@@ -970,21 +1117,14 @@ class SimulationEngine:
                 and target.jammer_active
                 and target.jammer_power_watts > 0.0
                 and "noise" in active_ecm_type
+                and not terrain_masked
             ):
                 effective_jammer_bandwidth = target.jammer_bandwidth_hz
                 if self.frequency_agility_enabled:
+                    # The jammer must spread over the agile band (10% of the carrier).
                     effective_jammer_bandwidth = max(
-                        effective_jammer_bandwidth, 0.1 * self.radar.frequency_hz
-                    )
-                rain_loss_for_jsr_db = 0.0
-                if self.rain_rate_mm_hr > 0.0 and freq_ghz >= 1.0:
-                    rain_loss_for_jsr_db = ITU_R_P838.path_attenuation(
-                        geom["range_m"] / 1000.0,
-                        freq_ghz,
-                        self.rain_rate_mm_hr,
-                        elevation_angle_deg=geom["elevation_deg"],
-                        polarization_tilt_deg=self.radar.polarization_tilt_deg,
-                        two_way=True,
+                        effective_jammer_bandwidth,
+                        FREQUENCY_AGILITY_BANDWIDTH_FRACTION * self.radar.frequency_hz,
                     )
                 jsr_db = self._ecm_simulator.calculate_jsr(
                     radar_pos=self.radar.position,
@@ -996,25 +1136,33 @@ class SimulationEngine:
                     target_rcs=rcs,
                     radar_bandwidth=self.radar.receiver_bandwidth_hz,
                     jammer_bandwidth=effective_jammer_bandwidth,
-                    signal_path_loss_db=atm_loss_db
-                    + rain_loss_for_jsr_db
+                    signal_path_loss_db=propagation_loss_db
                     + self.radar.system_losses_db,
                     jammer_path_loss_db=0.5
-                    * (
-                        atm_loss_db + rain_loss_for_jsr_db + self.radar.system_losses_db
-                    ),
+                    * (propagation_loss_db + self.radar.system_losses_db),
                 )
                 pre_jamming_snr_db = snr_db
                 snr_db = self._ecm_simulator.calculate_sjnr_db(snr_db, jsr_db)
                 jammer_snr_loss_db = pre_jamming_snr_db - snr_db
 
+            # Rain volume clutter in the target's resolution cell
             rain_clutter_loss_db = 0.0
-            if self.rain_rate_mm_hr > 0 and CLUTTER_AVAILABLE and geom["range_m"] > 100:
+            if (
+                self.rain_rate_mm_hr > 0.0
+                and CLUTTER_AVAILABLE
+                and range_m > 100.0
+                and target_z < self.rain_height_m
+                and not terrain_masked
+            ):
                 eta = ClutterModel.rain_reflectivity_marshall_palmer(
                     self.rain_rate_mm_hr, freq_ghz
                 )
                 rain_clutter_rcs = ClutterModel.volume_clutter_rcs(
-                    eta, geom["range_m"], self.radar.beamwidth_rad, self.radar.pulse_width_s
+                    eta,
+                    range_m,
+                    self.radar.beamwidth_rad,
+                    self.radar.pulse_width_s,
+                    elevation_beamwidth_rad=self.radar.beamwidth_el_rad,
                 )
                 if rain_clutter_rcs > 0.0:
                     pre_volume_clutter_snr_db = snr_db
@@ -1023,6 +1171,7 @@ class SimulationEngine:
                     )
                     rain_clutter_loss_db = pre_volume_clutter_snr_db - snr_db
 
+            # Receiver hard limiter
             receiver_input_power_dbm = None
             receiver_headroom_db = None
             receiver_clipping_loss_db = 0.0
@@ -1042,42 +1191,52 @@ class SimulationEngine:
                 receiver_clipping_loss_db = limiter.clipping_loss_db
                 receiver_overloaded = limiter.overloaded
 
-            # Calculate probability of detection (Swerling model)
+            # Detection: Swerling Pd averages over the RCS fluctuation
             pd = self._calculate_pd(snr_db, target.swerling_model)
+            is_detected = illuminated and bool(self.rng.random() < pd)
 
-            # Detection decision
-            is_detected = np.random.random() < pd
-
-            # Moving-target indication filter
-            # Moving Target Indication: Reject slow-moving targets (clutter)
-            # Reference: Richards, "Fundamentals of Radar Signal Processing"
+            # MTI notch: returns below the threshold radial speed are cancelled
+            # together with the clutter (Richards 2005, Sec. 17.1).
             if self.mti_enabled and is_detected:
-                radial_vel = abs(geom["radial_velocity_mps"])
-                if radial_vel < self.mti_threshold_mps:
+                if abs(geom["radial_velocity_mps"]) < self.mti_threshold_mps:
                     is_detected = False
-                    # Target rejected by MTI filter (appears as clutter)
 
-            # Generate measurements (with noise if detected)
             if is_detected:
-                measured_range = geom["range_m"] + np.random.normal(
-                    0, self.range_noise_std
-                )
-                measured_az = geom["azimuth_rad"] + np.random.normal(
-                    0, self.angle_noise_std
-                )
-                measured_el = geom["elevation_rad"] + np.random.normal(
-                    0, self.angle_noise_std
+                measured_range = range_m + self.rng.normal(0.0, self.range_noise_std)
+                if self.monopulse_enabled:
+                    # Sum/difference estimate relative to the current beam pointing;
+                    # the elevation beam is assumed centred on the target.
+                    monopulse = self._monopulse_estimator().measure_angle(
+                        self.radar.antenna_azimuth,
+                        geom["elevation_rad"],
+                        geom["azimuth_rad"],
+                        geom["elevation_rad"],
+                        snr_db=snr_db,
+                        rng=self.rng,
+                    )
+                    measured_az = monopulse.measured_azimuth_rad
+                    measured_el = monopulse.measured_elevation_rad
+                else:
+                    measured_az = wrap_to_pi(
+                        geom["azimuth_rad"] + self.rng.normal(0.0, self.angle_noise_std)
+                    )
+                    measured_el = geom["elevation_rad"] + self.rng.normal(
+                        0.0, self.angle_noise_std
+                    )
+                ground_offset = enu_from_polar(measured_range, measured_az, measured_el)
+                tracker_detections.append(
+                    (
+                        float(self.radar.position[0] + ground_offset[0]),
+                        float(self.radar.position[1] + ground_offset[1]),
+                    )
                 )
             else:
-                measured_range = 0.0
-                measured_az = 0.0
-                measured_el = 0.0
+                measured_range = measured_az = measured_el = float("nan")
 
-            # Create detection result
             result = DetectionResult(
                 target_id=target.target_id,
                 time=self.current_time,
-                true_range_m=geom["range_m"],
+                true_range_m=range_m,
                 true_azimuth_rad=geom["azimuth_rad"],
                 true_elevation_rad=geom["elevation_rad"],
                 true_velocity_mps=geom["radial_velocity_mps"],
@@ -1088,6 +1247,8 @@ class SimulationEngine:
                 snr_db=snr_db,
                 is_detected=is_detected,
                 pd=pd,
+                illuminated=illuminated,
+                terrain_masked=terrain_masked,
                 atmospheric_loss_db=atm_loss_db,
                 rain_attenuation_db=rain_loss_db,
                 surface_clutter_loss_db=clutter_snr_loss_db,
@@ -1105,28 +1266,26 @@ class SimulationEngine:
             )
 
             results.append(result)
-            self.log.add_result(result)
+            self._last_looks[target.target_id] = result
+            if illuminated:
+                self.log.add_result(result)
 
-            # Update state tracking
             self.state.detections[target.target_id] = is_detected
             self.state.snr_values[target.target_id] = snr_db
+            self.state.terrain_masked[target.target_id] = terrain_masked
 
-            # 3. Generate ECM false targets for jammer-equipped targets
-            # ═══ THROTTLE: Only generate new targets once per second ═══
+            # 3. ECM false targets, generated at most once per second
             if self.ecm_active and target.jammer_active:
-                # Check if enough time has passed since last generation
                 time_since_activation = self.current_time - self.ecm_activation_time
-                # Generate only at 1 Hz rate (once per second)
                 should_generate = int(time_since_activation) != int(
                     time_since_activation - dt
                 )
                 if should_generate or len(self.false_targets) == 0:
-                    new_false_targets = self.generate_ecm_false_targets(target)
-                    self.false_targets.extend(new_false_targets)
+                    self.false_targets.extend(self.generate_ecm_false_targets(target))
 
-        # ═══ PERFORMANCE: Enforce FIFO cap on false targets ═══
+        # Enforce FIFO cap on false targets
         while len(self.false_targets) > self.MAX_FALSE_TARGETS:
-            self.false_targets.pop(0)  # Remove oldest (FIFO)
+            self.false_targets.pop(0)
 
         # 4. Update and clean up false targets
         active_false_targets = []
@@ -1137,8 +1296,31 @@ class SimulationEngine:
                 active_false_targets.append(ft)
         self.false_targets = active_false_targets
 
-        # 5. Pulse-Doppler processing
-        # Generate Range-Doppler map when enabled
+        # 5. Track-while-scan: only tracks inside the swept sector can be updated
+        #    or charged a miss this step.
+        if self.enable_tracking and self.track_manager is not None:
+            coverage = None
+            if self.scan_gated_detection:
+
+                def coverage(position: Tuple[float, float]) -> bool:
+                    return self._beam_swept(
+                        azimuth_from_enu(
+                            position[0] - self.radar.position[0],
+                            position[1] - self.radar.position[1],
+                        )
+                    )
+
+            revisit_guard_s = 0.0
+            if self.scan_gated_detection and self.radar.scan_rate_rpm > 0.0:
+                revisit_guard_s = 0.5 * 60.0 / self.radar.scan_rate_rpm
+            self.tracks = self.track_manager.update(
+                tracker_detections,
+                dt,
+                in_coverage=coverage,
+                revisit_guard_s=revisit_guard_s,
+            )
+
+        # 6. Pulse-Doppler processing
         self._run_pulse_doppler()
 
         return results
@@ -1153,7 +1335,7 @@ class SimulationEngine:
         Returns:
             SimulationLog with all results
         """
-        n_steps = int(duration_s / self.dt)
+        n_steps = int(round(duration_s / self.dt))
 
         for _ in range(n_steps):
             self.step()
@@ -1161,12 +1343,34 @@ class SimulationEngine:
         return self.log
 
     def reset(self) -> None:
-        """Reset simulation to initial state."""
+        """Restore the initial scenario state (kinematics, ECM, tracks, RNG)."""
+        self.radar.state = copy.deepcopy(self._initial_radar_state)
+        self.radar.antenna_azimuth = self._initial_antenna_azimuth
+        self.radar.previous_antenna_azimuth = self._initial_antenna_azimuth
+        for target in self.targets:
+            initial = self._initial_target_states.get(target.target_id)
+            if initial is not None:
+                target.state = copy.deepcopy(initial)
+            target._position_history.clear()
         self.current_time = 0.0
         self.state = SimulationState(radar=self.radar)
         for target in self.targets:
             self.state.add_target(target)
         self.log = SimulationLog()
+        self.rng = np.random.default_rng(self.seed)
+        self.false_targets = []
+        self._next_false_id = 1000
+        for jammer in self._drfm_jammers.values():
+            jammer.deactivate()
+        self._drfm_jammers = {}
+        self.ecm_active = False
+        self.ecm_activation_time = 0.0
+        self._frame_count = 0
+        self._rd_map = None
+        self.tracks = []
+        self._last_looks = {}
+        if self.track_manager is not None:
+            self.track_manager.clear()
 
     def _calculate_pd(
         self,

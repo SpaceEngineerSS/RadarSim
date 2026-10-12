@@ -52,10 +52,11 @@ class AntennaPattern:
         """
         Uniform aperture (sinc²) gain pattern.
 
-        G(θ) = sinc²(π·D·sin(θ)/λ) ≈ sinc²(1.39·θ/θ₃ᵈᵇ)
+        G(θ) = sinc²(D·sin(θ)/λ) ≈ sinc²(0.886·θ/θ₃ᵈᵇ), with numpy's normalized
+        sinc(u) = sin(πu)/(πu).
 
-        The constant 1.39 comes from: for sinc² pattern,
-        the 3dB point is at u = 0.4429, and D/λ ≈ 0.886/θ₃ᵈᵇ.
+        sinc²(u) = 0.5 at u = 0.4430, so placing that point at θ = θ₃ᵈᵇ/2 gives
+        the coefficient 2 × 0.4430 = 0.886 (D/λ ≈ 0.886/θ₃ᵈᵇ).
 
         Args:
             theta_rad: Off-boresight angle [rad]
@@ -65,7 +66,7 @@ class AntennaPattern:
         """
         if abs(theta_rad) < 1e-10:
             return 1.0
-        u = 1.39 * theta_rad / self.beamwidth_rad
+        u = 0.886 * theta_rad / self.beamwidth_rad
         return float(np.sinc(u) ** 2)
 
     def gaussian_pattern(self, theta_rad: float) -> float:
@@ -107,7 +108,7 @@ class AntennaPattern:
 
         # Sidelobe suppression taper
         sll_linear = 10 ** (self.sll_db / 20.0)
-        u = 1.39 * theta_rad / self.beamwidth_rad
+        u = 0.886 * theta_rad / self.beamwidth_rad
 
         # Beyond the main lobe, apply sidelobe cap
         if abs(u) > 1.0:

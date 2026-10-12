@@ -13,10 +13,12 @@ References:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 
 import numba
 import numpy as np
+
+from src.physics.geometry import azimuth_from_enu, heading_from_velocity
 
 
 class SwerlingModel(Enum):
@@ -88,15 +90,15 @@ class TargetKinematics:
     """
     Target kinematic state with attitude (6-DOF compatible)
 
-    Coordinate system: North-East-Down (NED)
+    Coordinate system: East-North-Up (ENU), see ``src.physics.geometry``
 
     Attributes:
         position: [x, y, z] position [m]
         velocity: [vx, vy, vz] velocity [m/s]
         acceleration: [ax, ay, az] acceleration [m/s²]
-        roll: Roll angle [rad]
-        pitch: Pitch angle [rad]
-        yaw: Yaw/heading angle [rad]
+        roll: Roll angle [rad], positive right wing down
+        pitch: Pitch angle [rad], positive nose up
+        yaw: Heading [rad], clockwise from North
     """
 
     position: np.ndarray
@@ -135,16 +137,17 @@ class TargetKinematics:
 
         if vel_horizontal > 1e-3:
             # Yaw from horizontal velocity
-            self.yaw = np.arctan2(self.velocity[1], self.velocity[0])
+            self.yaw = heading_from_velocity(self.velocity)
 
-            # Pitch from velocity vector
-            self.pitch = np.arctan2(-self.velocity[2], vel_horizontal)
+            # Pitch from velocity vector (z is up)
+            self.pitch = np.arctan2(self.velocity[2], vel_horizontal)
 
         # Roll from lateral acceleration (coordinated turn)
         if vel_horizontal > 10.0:  # Only if moving significantly
-            lateral_accel = self.acceleration[0] * np.sin(self.yaw) - self.acceleration[
+            # Component of acceleration towards the right of the heading
+            lateral_accel = self.acceleration[0] * np.cos(self.yaw) - self.acceleration[
                 1
-            ] * np.cos(self.yaw)
+            ] * np.sin(self.yaw)
             # φ = arctan(a_lateral / g)
             self.roll = np.arctan2(lateral_accel, 9.81)
             self.roll = np.clip(self.roll, -np.pi / 3, np.pi / 3)  # Limit to ±60°
@@ -166,6 +169,7 @@ class SwerlingRCS:
         model: SwerlingModel,
         n_pulses: int = 1,
         correlation: float = 1.0,
+        rng: Optional[np.random.Generator] = None,
     ) -> float:
         """
         Generate fluctuating RCS based on Swerling model.
@@ -175,6 +179,7 @@ class SwerlingRCS:
             model: Swerling model type (0-4)
             n_pulses: Number of pulses for integration
             correlation: Scan-to-scan correlation (0-1)
+            rng: Random generator for reproducible draws (default: fresh generator)
 
         Returns:
             Fluctuated RCS value [m²]
@@ -183,6 +188,8 @@ class SwerlingRCS:
         """
         if mean_rcs <= 0:
             return 0.0
+        if rng is None:
+            rng = np.random.default_rng()
 
         if model == SwerlingModel.SWERLING_0:
             # Non-fluctuating (Marcum case)
@@ -191,28 +198,28 @@ class SwerlingRCS:
         elif model == SwerlingModel.SWERLING_1:
             # Slow fluctuation, exponential (Rayleigh amplitude)
             # PDF: p(σ) = (1/σ_avg) * exp(-σ/σ_avg)
-            return np.random.exponential(mean_rcs)
+            return rng.exponential(mean_rcs)
 
         elif model == SwerlingModel.SWERLING_2:
             # Fast fluctuation, exponential
             # Pulse-to-pulse decorrelation
             if n_pulses > 1:
-                samples = np.random.exponential(mean_rcs, n_pulses)
+                samples = rng.exponential(mean_rcs, n_pulses)
                 return np.mean(samples)
-            return np.random.exponential(mean_rcs)
+            return rng.exponential(mean_rcs)
 
         elif model == SwerlingModel.SWERLING_3:
             # Slow fluctuation, Chi-squared 4 DoF
             # One dominant scatterer + many small
             # PDF: p(σ) = (4σ/σ_avg²) * exp(-2σ/σ_avg)
-            return np.random.gamma(2, mean_rcs / 2)
+            return rng.gamma(2, mean_rcs / 2)
 
         elif model == SwerlingModel.SWERLING_4:
             # Fast fluctuation, Chi-squared 4 DoF
             if n_pulses > 1:
-                samples = np.random.gamma(2, mean_rcs / 2, n_pulses)
+                samples = rng.gamma(2, mean_rcs / 2, n_pulses)
                 return np.mean(samples)
-            return np.random.gamma(2, mean_rcs / 2)
+            return rng.gamma(2, mean_rcs / 2)
 
         return mean_rcs
 
@@ -333,7 +340,7 @@ def calculate_aspect_angle(
 
     Args:
         target_position: Target position [x, y, z] [m]
-        target_heading: Target heading angle [rad] (0 = North)
+        target_heading: Target heading [rad], clockwise from North
         radar_position: Radar position [x, y, z] [m]
 
     Returns:
@@ -343,7 +350,7 @@ def calculate_aspect_angle(
     delta = np.asarray(radar_position) - np.asarray(target_position)
 
     # Bearing from target to radar
-    bearing_to_radar = np.arctan2(delta[1], delta[0])
+    bearing_to_radar = azimuth_from_enu(delta[0], delta[1])
 
     # Aspect angle is difference between target heading and bearing to radar
     aspect = bearing_to_radar - target_heading
@@ -447,14 +454,10 @@ def validate_swerling_distribution(
     """
     from scipy import stats
 
-    random_state = np.random.get_state()
-    np.random.seed(random_seed)
-    try:
-        samples = np.array(
-            [SwerlingRCS.generate_rcs(mean_rcs, model) for _ in range(n_samples)]
-        )
-    finally:
-        np.random.set_state(random_state)
+    rng = np.random.default_rng(random_seed)
+    samples = np.array(
+        [SwerlingRCS.generate_rcs(mean_rcs, model, rng=rng) for _ in range(n_samples)]
+    )
 
     if model == SwerlingModel.SWERLING_0:
         # Non-fluctuating: all samples should equal mean_rcs

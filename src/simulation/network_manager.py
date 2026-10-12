@@ -32,6 +32,8 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment, minimize, minimize_scalar
 from scipy.stats import chi2
 
+from src.physics.geometry import azimuth_from_enu
+
 # ═══════════════════════════════════════════════════════════════════════
 # DATA STRUCTURES
 # ═══════════════════════════════════════════════════════════════════════
@@ -425,9 +427,10 @@ class StrobeTriangulator:
     intersecting the bearing lines.
 
     Algorithm (Least Squares):
-        For each radar i at (x_i, y_i) measuring bearing θ_i:
+        For each radar i at (x_i, y_i) measuring bearing θ_i (clockwise from
+        North, ENU frame), the bearing line has direction (sin θ_i, cos θ_i):
 
-        Line equation: sin(θ_i)·x - cos(θ_i)·y = x_i·sin(θ_i) - y_i·cos(θ_i)
+        Line equation: cos(θ_i)·x - sin(θ_i)·y = x_i·cos(θ_i) - y_i·sin(θ_i)
 
         System: A·p = b
         Solution: p = (A^T·A)⁻¹·A^T·b
@@ -462,9 +465,9 @@ class StrobeTriangulator:
             cos_t = np.cos(strobe.bearing_rad)
             xi, yi = strobe.radar_position[0], strobe.radar_position[1]
 
-            A[i, 0] = sin_t
-            A[i, 1] = -cos_t
-            b[i] = xi * sin_t - yi * cos_t
+            A[i, 0] = cos_t
+            A[i, 1] = -sin_t
+            b[i] = xi * cos_t - yi * sin_t
 
         # Least Squares: p = (A^T·A)⁻¹·A^T·b
         ATA = A.T @ A
@@ -951,7 +954,7 @@ def validate_network_fusion() -> dict:
         np.array([25000.0, 40000.0]),
     ]
     for pos in radar_positions:
-        bearing = np.arctan2(jammer_true[1] - pos[1], jammer_true[0] - pos[0])
+        bearing = azimuth_from_enu(jammer_true[0] - pos[0], jammer_true[1] - pos[1])
         strobes.append(
             StrobeReport(
                 node_id="test",

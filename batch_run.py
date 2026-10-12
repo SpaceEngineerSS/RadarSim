@@ -131,7 +131,7 @@ def _print_summary(results: List[SimulationResult], total_time: float) -> None:
         return
 
     # Calculate statistics
-    total_pulses = sum(r.n_pulses for r in results)
+    total_looks = sum(r.n_looks for r in results)
     total_detections = sum(r.n_detections for r in results)
     avg_pd = sum(r.detection_ratio for r in results) / len(results)
     avg_snr = sum(r.mean_snr_db for r in results) / len(results)
@@ -140,7 +140,7 @@ def _print_summary(results: List[SimulationResult], total_time: float) -> None:
     print(f"BATCH COMPLETE")
     print(f"=" * 60)
     print(f"Total simulations: {len(results)}")
-    print(f"Total pulses: {total_pulses:,}")
+    print(f"Total looks: {total_looks:,}")
     print(f"Total detections: {total_detections:,}")
     print(f"Average Pd: {avg_pd:.3f}")
     print(f"Average SNR: {avg_snr:.1f} dB")

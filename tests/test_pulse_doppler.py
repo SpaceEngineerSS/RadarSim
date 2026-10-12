@@ -478,8 +478,13 @@ class TestRangeDopplerMap:
             np.array([]), np.array([]), np.array([]), noise_power=0.0
         )
         assert rd.range_axis_m[1] == pytest.approx(C_LIGHT / (2.0 * 10e6))
-        expected_doppler = np.fft.fftshift(np.fft.fftfreq(63, d=1.0 / 1000.0))
+        # Rows are ordered by ascending radial velocity, i.e. descending Doppler.
+        expected_doppler = np.sort(np.fft.fftfreq(63, d=1.0 / 1000.0))[::-1]
         np.testing.assert_allclose(rd.doppler_axis_hz, expected_doppler)
+        np.testing.assert_allclose(
+            rd.velocity_axis_mps, -expected_doppler * processor.wavelength_m / 2.0
+        )
+        assert np.all(np.diff(rd.velocity_axis_mps) > 0.0)
 
     def test_window_enbw_matches_periodic_hann(self):
         window = PulseDopplerProcessor._generate_window(64, "hann")

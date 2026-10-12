@@ -22,6 +22,8 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+from src.physics.ecm import ECMSimulator
+
 # ═══════════════════════════════════════════════════════════════════════
 # FREQUENCY AGILITY
 # ═══════════════════════════════════════════════════════════════════════
@@ -400,12 +402,7 @@ class ECCMController:
 
         Reference: Schleher (1999), Eq. 4.8
         """
-        jsr_eff = self.get_effective_jsr_db()
-        if jsr_eff < -50:
-            return snr_db  # No significant jamming
-
-        inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_eff / 10.0)
-        return float(-10.0 * np.log10(inverse_sjnr))
+        return ECMSimulator.calculate_sjnr_db(snr_db, self.get_effective_jsr_db())
 
     def get_status(self) -> dict:
         """Get combined ECCM status for UI."""

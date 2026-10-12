@@ -34,6 +34,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from src.physics.ecm import ECMSimulator
+
 from .kalman import KalmanState
 
 
@@ -389,8 +391,7 @@ class ExtendedKalmanFilter:
 
         Reference: Schleher (1999), Eq. 4.8
         """
-        inverse_sjnr = 10.0 ** (-snr_db / 10.0) + 10.0 ** (jsr_db / 10.0)
-        return float(-10.0 * np.log10(inverse_sjnr))
+        return ECMSimulator.calculate_sjnr_db(snr_db, jsr_db)
 
     @property
     def is_coasting(self) -> bool:
@@ -415,6 +416,10 @@ class ExtendedKalmanFilter:
     def _measurement_function(x: np.ndarray) -> np.ndarray:
         """
         Nonlinear measurement function h(x).
+
+        θ is the filter's internal polar angle atan2(y, x), measured counter-
+        clockwise from +x. It is not the compass azimuth used elsewhere in
+        RadarSim; callers outside the filter pass Cartesian (x, y) positions.
 
         h(x) = | r |   | √(x² + y²)    |
                | θ | = | atan2(y, x)    |
@@ -693,8 +698,8 @@ class ExtendedKalmanFilter:
         return np.sqrt(state.x[2] ** 2 + state.x[3] ** 2)
 
     def get_heading(self, state: KalmanState) -> float:
-        """Calculate heading angle (radians, 0 = North, CW positive)."""
-        return np.arctan2(state.x[3], state.x[2])
+        """Heading angle in radians, clockwise from North (ENU frame)."""
+        return float(np.arctan2(state.x[2], state.x[3]))
 
 
 # ═══════════════════════════════════════════════════════════════════════

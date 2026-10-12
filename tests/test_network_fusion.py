@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 
 import src.simulation.network_manager as network_manager
+from src.physics.geometry import azimuth_from_enu
 from src.simulation.network_manager import (
     CovarianceIntersection,
     LatencyModel,
@@ -257,7 +258,7 @@ class TestStrobeTriangulation:
 
         strobes = []
         for i, pos in enumerate(radars):
-            bearing = np.arctan2(jammer_pos[1] - pos[1], jammer_pos[0] - pos[0])
+            bearing = azimuth_from_enu(jammer_pos[0] - pos[0], jammer_pos[1] - pos[1])
             strobes.append(
                 StrobeReport(
                     node_id=f"R{i}",
@@ -287,7 +288,7 @@ class TestStrobeTriangulation:
 
         strobes = []
         for i, pos in enumerate(radars):
-            bearing = np.arctan2(jammer_pos[1] - pos[1], jammer_pos[0] - pos[0])
+            bearing = azimuth_from_enu(jammer_pos[0] - pos[0], jammer_pos[1] - pos[1])
             bearing += rng.normal(0, np.radians(1.0))  # 1° noise
             strobes.append(
                 StrobeReport(
@@ -312,13 +313,13 @@ class TestStrobeTriangulation:
             StrobeReport(
                 node_id="R1",
                 radar_position=np.array([0.0, 0.0]),
-                bearing_rad=np.radians(45),
+                bearing_rad=np.radians(45),  # target to the North-East
                 timestamp=0.0,
             ),
             StrobeReport(
                 node_id="R2",
                 radar_position=np.array([10000.0, 0.0]),
-                bearing_rad=np.radians(135),
+                bearing_rad=np.radians(315),  # target to the North-West
                 timestamp=0.0,
             ),
         ]
@@ -633,9 +634,9 @@ class TestNetworkManager:
         jammer_true = np.array([25000.0, 15000.0])
 
         for nid, node in nm.nodes.items():
-            bearing = np.arctan2(
-                jammer_true[1] - node.position_xy[1],
+            bearing = azimuth_from_enu(
                 jammer_true[0] - node.position_xy[0],
+                jammer_true[1] - node.position_xy[1],
             )
             nm.submit_strobes(
                 nid,

@@ -196,7 +196,7 @@ class TestRadarGeometry:
 
     def test_azimuth_east(self, radar):
         """Target to the east should have azimuth ~90°"""
-        target_pos = np.array([0.0, 1000.0, 0.0])  # Due east
+        target_pos = np.array([1000.0, 0.0, 0.0])  # Due east (ENU: x = East)
 
         geom = radar.calculate_target_geometry(target_pos)
 
@@ -204,7 +204,7 @@ class TestRadarGeometry:
 
     def test_azimuth_north(self, radar):
         """Target to the north should have azimuth ~0°"""
-        target_pos = np.array([1000.0, 0.0, 0.0])  # Due north
+        target_pos = np.array([0.0, 1000.0, 0.0])  # Due north (ENU: y = North)
 
         geom = radar.calculate_target_geometry(target_pos)
 
@@ -242,10 +242,11 @@ class TestSimulationEngine:
 
         engine = SimulationEngine(radar=radar, targets=[target], dt=0.1)
 
-        # Run for 1 second
-        log = engine.run(duration_s=1.0)
+        # One antenna revolution at 6 rpm takes 10 s; the beam centre crosses
+        # the target's azimuth once, giving exactly one detection opportunity.
+        log = engine.run(duration_s=10.0)
 
-        assert log.total_opportunities > 0
+        assert log.total_opportunities == 1
 
     def test_target_approaches(self):
         """Target range should decrease as it approaches"""

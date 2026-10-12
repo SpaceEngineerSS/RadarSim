@@ -1,5 +1,6 @@
 """ITU-R P.676-13 line-by-line gaseous attenuation."""
 
+import functools
 from typing import Tuple
 
 import numpy as np
@@ -113,7 +114,23 @@ def _line_shape(
 
 
 class ITU_R_P676:
-    """Specific gaseous attenuation from ITU-R P.676-13 Annex 1."""
+    """
+    Specific gaseous attenuation from ITU-R P.676-13 Annex 1.
+
+    ``pressure_hpa`` is the dry-air partial pressure p of the Recommendation; a
+    barometric (total) pressure must first be converted with
+    ``dry_air_pressure_hpa``.
+    """
+
+    @staticmethod
+    def dry_air_pressure_hpa(
+        total_pressure_hpa: float, temperature_c: float, water_vapor_density: float
+    ) -> float:
+        """Dry-air pressure p = P_total - e, with e = rho * T / 216.7 (P.676 Eq. 4)."""
+        vapor_pressure = water_vapor_density * (temperature_c + 273.15) / 216.7
+        if vapor_pressure >= total_pressure_hpa:
+            raise ValueError("water vapour pressure exceeds the total pressure")
+        return total_pressure_hpa - vapor_pressure
 
     @staticmethod
     def _atmospheric_state(
@@ -240,17 +257,11 @@ class ITU_R_P676:
     ) -> Tuple[float, float, float]:
         if range_km < 0.0:
             raise ValueError("range_km cannot be negative")
-        oxygen_specific = cls.specific_attenuation_oxygen(
-            frequency_ghz,
-            temperature_c,
-            pressure_hpa,
-            water_vapor_density,
-        )
-        water_specific = cls.specific_attenuation_water_vapor(
-            frequency_ghz,
-            temperature_c,
-            water_vapor_density,
-            pressure_hpa,
+        oxygen_specific, water_specific = _specific_attenuations(
+            float(frequency_ghz),
+            float(temperature_c),
+            float(pressure_hpa),
+            float(water_vapor_density),
         )
         path_multiplier = 2.0 if two_way else 1.0
         oxygen = oxygen_specific * range_km * path_multiplier
@@ -307,3 +318,21 @@ def validate_itu_xband() -> dict:
             "reference": "ITU-R P.676-13 Annex 1",
         },
     }
+
+
+@functools.lru_cache(maxsize=256)
+def _specific_attenuations(
+    frequency_ghz: float,
+    temperature_c: float,
+    pressure_hpa: float,
+    water_vapor_density: float,
+) -> Tuple[float, float]:
+    """Cached (oxygen, water-vapour) specific attenuation [dB/km] for a path state."""
+    return (
+        ITU_R_P676.specific_attenuation_oxygen(
+            frequency_ghz, temperature_c, pressure_hpa, water_vapor_density
+        ),
+        ITU_R_P676.specific_attenuation_water_vapor(
+            frequency_ghz, temperature_c, water_vapor_density, pressure_hpa
+        ),
+    )

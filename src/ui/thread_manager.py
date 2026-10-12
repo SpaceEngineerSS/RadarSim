@@ -183,8 +183,6 @@ class SimulationWorker(QObject):
     def _build_state_dict(self, results, dt: float) -> Dict[str, Any]:
         """Build the frame dictionary sent to the UI. Runs in the worker thread."""
         targets_data = []
-        detections_for_tracker = []  # (x, y) positions for tracker
-
         for target in self.engine.targets:
             geom = self.engine.radar.calculate_target_geometry(
                 target.position, target.velocity
@@ -196,10 +194,18 @@ class SimulationWorker(QObject):
             targets_data.append(
                 {
                     "id": target.target_id,
-                    "name": target.target_type,  # For MIL-STD-2525 affiliation
+                    "name": target.name,
                     "type": target.target_type,
                     "position": target.position.tolist(),
                     "velocity": target.velocity.tolist(),
+                    "velocity_mps": target.speed,
+                    "heading_rad": target.state.heading,
+                    "altitude_m": target.state.altitude,
+                    "has_jammer": target.has_jammer,
+                    "jammer_active": target.jammer_active,
+                    "terrain_masked": self.engine.state.terrain_masked.get(
+                        target.target_id, False
+                    ),
                     "range_m": geom["range_m"],
                     "range_km": geom["range_m"] / 1000,
                     "azimuth_rad": geom["azimuth_rad"],
@@ -213,13 +219,9 @@ class SimulationWorker(QObject):
                 }
             )
 
-            if is_detected:
-                detections_for_tracker.append((target.position[0], target.position[1]))
-
         tracks_data = []
-        if getattr(self.engine, "track_manager", None) is not None:
-            tracks = self.engine.track_manager.update(detections_for_tracker, dt=dt)
-            for track in tracks:
+        if self.engine.enable_tracking:
+            for track in self.engine.tracks:
                 track_dict = {
                     "track_id": track.id,
                     "id": track.id,
@@ -515,31 +517,31 @@ def create_demo_scenario() -> SimulationEngine:
 
     # Create multiple targets
     targets = [
-        # Aircraft approaching from North
+        # Aircraft approaching from the North (ENU: x = East, y = North, z = Up)
         Target(
             target_id=1,
-            position=np.array([80000.0, 5000.0, -3000.0]),  # 80km N, 5km E, 3km alt
-            velocity=np.array([-150.0, 10.0, 0.0]),  # Approaching at 150 m/s
+            position=np.array([5000.0, 80000.0, 3000.0]),  # 80 km N, 5 km E, 3 km alt
+            velocity=np.array([10.0, -150.0, 0.0]),  # Approaching at 150 m/s
             rcs_m2=5.0,
             target_type="aircraft",
             swerling_model=SwerlingModel.SWERLING_1,
             motion_model=MotionModel.CONSTANT_VELOCITY,
         ),
-        # Fast mover from East
+        # Fast mover from the East
         Target(
             target_id=2,
-            position=np.array([30000.0, 60000.0, -5000.0]),  # 60km E
-            velocity=np.array([-50.0, -200.0, 0.0]),  # Cross track
+            position=np.array([60000.0, 30000.0, 5000.0]),  # 60 km E, 30 km N
+            velocity=np.array([-200.0, -50.0, 0.0]),  # Crossing
             rcs_m2=2.0,
             target_type="aircraft",
             swerling_model=SwerlingModel.SWERLING_1,
             motion_model=MotionModel.CONSTANT_VELOCITY,
         ),
-        # Small target from South
+        # Small target from the South
         Target(
             target_id=3,
-            position=np.array([-40000.0, 20000.0, -2000.0]),
-            velocity=np.array([100.0, -20.0, 0.0]),
+            position=np.array([20000.0, -40000.0, 2000.0]),
+            velocity=np.array([-20.0, 100.0, 0.0]),
             rcs_m2=0.5,
             target_type="missile",
             swerling_model=SwerlingModel.SWERLING_3,
@@ -548,7 +550,7 @@ def create_demo_scenario() -> SimulationEngine:
         # Static target for calibration
         Target(
             target_id=4,
-            position=np.array([25000.0, -25000.0, 0.0]),  # 35km SW
+            position=np.array([-25000.0, -25000.0, 0.0]),  # 35 km SW
             velocity=np.array([0.0, 0.0, 0.0]),
             rcs_m2=10.0,
             target_type="ship",

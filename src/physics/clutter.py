@@ -17,7 +17,6 @@ References:
 from enum import Enum
 from typing import Dict, Optional
 
-import numba
 import numpy as np
 
 from .constants import SPEED_OF_LIGHT
@@ -65,61 +64,6 @@ class ClutterModel:
 
     Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 5
     """
-
-    @staticmethod
-    @numba.jit(nopython=True, cache=True)
-    def _weibull_samples_jit(shape: float, scale: float, size: int) -> np.ndarray:
-        """
-        JIT-compiled Weibull distributed samples.
-
-        Weibull PDF: p(x) = (k/λ) * (x/λ)^(k-1) * exp(-(x/λ)^k)
-
-        Args:
-            shape: Shape parameter k (Weibull shape)
-            scale: Scale parameter λ
-            size: Number of samples
-
-        Returns:
-            Array of Weibull-distributed values
-        """
-        # Generate uniform samples and transform to Weibull
-        u = np.random.random(size)
-        # Inverse CDF: x = λ * (-ln(1-u))^(1/k)
-        samples = scale * ((-np.log(1 - u + 1e-10)) ** (1 / shape))
-        return samples
-
-    @staticmethod
-    @numba.jit(nopython=True, cache=True)
-    def _k_distribution_samples_jit(
-        mean: float, shape_nu: float, size: int
-    ) -> np.ndarray:
-        """
-        JIT-compiled K-distribution samples (compound model).
-
-        K-distribution models sea clutter as product of:
-        - Rayleigh (thermal noise/speckle)
-        - Gamma (texture due to sea surface modulation)
-
-        Args:
-            mean: Mean value
-            shape_nu: Shape parameter ν (controls spikiness)
-            size: Number of samples
-
-        Returns:
-            Array of K-distributed values
-
-        Reference: Ward, 1981
-        """
-        # Gamma-distributed texture component
-        gamma_samples = np.random.gamma(shape_nu, mean / shape_nu, size)
-
-        # Rayleigh speckle component (exponential for power)
-        rayleigh_power = np.random.exponential(1.0, size)
-
-        # K-distribution is product
-        k_samples = gamma_samples * rayleigh_power
-
-        return k_samples
 
     @staticmethod
     def ground_clutter_sigma0(
@@ -316,7 +260,11 @@ class ClutterModel:
 
     @staticmethod
     def ground_clutter_weibull(
-        sigma0_db: float, cell_area_m2: float, shape: float = 2.0, size: int = 1
+        sigma0_db: float,
+        cell_area_m2: float,
+        shape: float = 2.0,
+        size: int = 1,
+        rng: Optional[np.random.Generator] = None,
     ) -> np.ndarray:
         """
         Generate Weibull-distributed ground clutter RCS values.
@@ -326,6 +274,7 @@ class ClutterModel:
             cell_area_m2: Radar resolution cell area [m²]
             shape: Weibull shape parameter (1.5-3.0 typical)
             size: Number of samples
+            rng: Random generator for reproducible samples
 
         Returns:
             Array of clutter RCS values [m²]
@@ -342,11 +291,17 @@ class ClutterModel:
 
         scale = mean_rcs / gamma_func(1 + 1 / shape)
 
-        return ClutterModel._weibull_samples_jit(shape, scale, size)
+        if rng is None:
+            rng = np.random.default_rng()
+        return scale * rng.weibull(shape, size)
 
     @staticmethod
     def sea_clutter_k_distribution(
-        sigma0_db: float, cell_area_m2: float, sea_state: int = 3, size: int = 1
+        sigma0_db: float,
+        cell_area_m2: float,
+        sea_state: int = 3,
+        size: int = 1,
+        rng: Optional[np.random.Generator] = None,
     ) -> np.ndarray:
         """
         Generate K-distributed sea clutter RCS values.
@@ -356,6 +311,7 @@ class ClutterModel:
             cell_area_m2: Radar resolution cell area [m²]
             sea_state: Douglas sea state (determines shape)
             size: Number of samples
+            rng: Random generator for reproducible samples
 
         Returns:
             Array of clutter RCS values [m²]
@@ -369,7 +325,11 @@ class ClutterModel:
         # Shape parameter depends on sea state (higher state = spikier clutter)
         shape_nu = max(0.5, 10.0 - sea_state)
 
-        return ClutterModel._k_distribution_samples_jit(mean_rcs, shape_nu, size)
+        if rng is None:
+            rng = np.random.default_rng()
+        # Compound model: gamma texture times exponential (Rayleigh-power) speckle
+        texture = rng.gamma(shape_nu, mean_rcs / shape_nu, size)
+        return texture * rng.exponential(1.0, size)
 
     @staticmethod
     def rain_reflectivity_marshall_palmer(
@@ -407,77 +367,90 @@ class ClutterModel:
 
     @staticmethod
     def volume_clutter_rcs(
-        eta: float, range_m: float, beamwidth_rad: float, pulse_width_s: float
+        eta: float,
+        range_m: float,
+        beamwidth_rad: float,
+        pulse_width_s: float,
+        elevation_beamwidth_rad: float = None,
     ) -> float:
         """
-        Calculate volume clutter RCS from reflectivity.
+        Volume clutter RCS of one resolution cell.
 
-        σ_c = η * V_cell
-        V_cell = (π/4) * R² * θ² * (c*τ/2)
+        σ_c = η · V_cell,  V_cell = (π/4) · R² · θ_az · θ_el · (c·τ/2)
 
         Args:
             eta: Volume reflectivity [m²/m³]
             range_m: Range to clutter cell [m]
-            beamwidth_rad: Radar beamwidth [rad]
+            beamwidth_rad: Azimuth 3-dB beamwidth [rad]
             pulse_width_s: Pulse width [s]
+            elevation_beamwidth_rad: Elevation 3-dB beamwidth [rad] (default: azimuth)
 
         Returns:
             Volume clutter RCS [m²]
+
+        Reference: Richards (2005), Eq. 2.61; Skolnik (2008), Sec. 7.4
         """
+        if elevation_beamwidth_rad is None:
+            elevation_beamwidth_rad = beamwidth_rad
         range_resolution = SPEED_OF_LIGHT * pulse_width_s / 2
-
-        # Resolution cell volume
-        volume = (np.pi / 4) * (range_m**2) * (beamwidth_rad**2) * range_resolution
-
+        volume = (
+            (np.pi / 4)
+            * range_m**2
+            * beamwidth_rad
+            * elevation_beamwidth_rad
+            * range_resolution
+        )
         return eta * volume
 
     @staticmethod
-    def generate_clutter_map(
-        range_bins: int,
-        azimuth_bins: int,
-        max_range_m: float,
-        terrain_type: str = "rural",
-        frequency_ghz: float = 10.0,
-        radar_altitude_m: float = 0.0,
-    ) -> np.ndarray:
+    def elevation_two_way_gain(
+        off_boresight_rad: float,
+        elevation_beamwidth_rad: float,
+        sidelobe_level_db: float = -30.0,
+    ) -> float:
         """
-        Generate 2D clutter map for PPI display.
+        Two-way (transmit x receive) elevation-pattern power gain, normalized to 1.
 
-        Args:
-            range_bins: Number of range bins
-            azimuth_bins: Number of azimuth bins
-            max_range_m: Maximum range [m]
-            terrain_type: Terrain classification
-            frequency_ghz: Radar frequency [GHz]
-            radar_altitude_m: Radar altitude [m]
+        Main lobe: Gaussian beam G(Δ) = exp(-4 ln2 · Δ²/θ_el²) (one way, power),
+        floored at the one-way sidelobe level. Used to weight surface clutter that
+        enters through the elevation pattern when the beam points at the target.
 
-        Returns:
-            2D array of clutter power [linear]
+        Reference: Skolnik (2008), Sec. 7.3 (clutter through the antenna pattern);
+        Barton (2005), Eq. 3.2.6 (Gaussian beam)
         """
-        # Create range array
-        ranges = np.linspace(100, max_range_m, range_bins)
+        if elevation_beamwidth_rad <= 0.0:
+            raise ValueError("elevation_beamwidth_rad must be positive")
+        one_way = np.exp(
+            -4.0 * np.log(2.0) * (off_boresight_rad / elevation_beamwidth_rad) ** 2
+        )
+        one_way = max(one_way, 10.0 ** (sidelobe_level_db / 10.0))
+        return float(one_way**2)
 
-        # Calculate grazing angles
-        clutter_map = np.zeros((range_bins, azimuth_bins))
+    @staticmethod
+    def mti_improvement_factor_db(
+        canceller_order: int,
+        prf_hz: float,
+        wavelength_m: float,
+        clutter_velocity_spread_mps: float,
+        stability_limit_db: float = 50.0,
+    ) -> float:
+        """
+        MTI improvement factor of an N-delay canceller against Gaussian clutter.
 
-        for i, r in enumerate(ranges):
-            # Grazing angle (simplified flat earth)
-            grazing = np.arctan2(radar_altitude_m, r) if radar_altitude_m > 0 else 0.05
-            grazing = max(0.01, grazing)  # Minimum 0.5°
+        Spectral limit with clutter spread σ_c = 2σ_v/λ [Hz]:
+            single canceller  I = 2 (f_r / 2πσ_c)²
+            double canceller  I = 2 (f_r / 2πσ_c)⁴
+        combined with the coherent-system stability limit as 1/I = 1/I_c + 1/I_s.
 
-            # Get σ0
-            sigma0_db = ClutterModel.ground_clutter_sigma0(
-                grazing, terrain_type, frequency_ghz
-            )
-
-            # Resolution cell area (approximate)
-            cell_area = 100 * 10  # 100m range x 10m cross-range
-
-            # Generate clutter samples for all azimuths
-            clutter_rcs = ClutterModel.ground_clutter_weibull(
-                sigma0_db, cell_area, shape=2.0, size=azimuth_bins
-            )
-
-            clutter_map[i, :] = clutter_rcs
-
-        return clutter_map
+        Reference: Skolnik (2008), Radar Handbook 3rd Ed., Eqs. 2.41-2.42;
+        Nathanson (1999), Table 7.5 for σ_v
+        """
+        if canceller_order not in (1, 2):
+            raise ValueError("canceller_order must be 1 or 2")
+        if min(prf_hz, wavelength_m, clutter_velocity_spread_mps) <= 0.0:
+            raise ValueError("PRF, wavelength and clutter spread must be positive")
+        sigma_c_hz = 2.0 * clutter_velocity_spread_mps / wavelength_m
+        ratio = prf_hz / (2.0 * np.pi * sigma_c_hz)
+        spectral = 2.0 * ratio ** (2 * canceller_order)
+        stability = 10.0 ** (stability_limit_db / 10.0)
+        return float(10.0 * np.log10(1.0 / (1.0 / spectral + 1.0 / stability)))

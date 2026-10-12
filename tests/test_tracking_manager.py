@@ -83,14 +83,15 @@ def test_confirmed_track_remains_reported_while_coasting():
     assert manager.get_confirmed_tracks() == [track]
 
 
-def test_radar_elevation_and_heading_follow_north_east_up_convention():
+def test_radar_elevation_and_heading_follow_east_north_up_convention():
     radar = Radar("coordinate-test", np.zeros(3))
     geometry = radar.calculate_target_geometry(np.array([1000.0, 1000.0, 1000.0]))
     assert geometry["azimuth_deg"] == pytest.approx(45.0)
     assert geometry["elevation_deg"] > 0.0
 
     manager = TrackManager()
-    state = manager.kf.initialize((0.0, 0.0), velocity=(100.0, 0.0))
-    assert manager.kf.get_heading(state) == pytest.approx(0.0)
+    # ENU: x = East, y = North; heading clockwise from North.
     state = manager.kf.initialize((0.0, 0.0), velocity=(0.0, 100.0))
+    assert manager.kf.get_heading(state) == pytest.approx(0.0)
+    state = manager.kf.initialize((0.0, 0.0), velocity=(100.0, 0.0))
     assert manager.kf.get_heading(state) == pytest.approx(np.pi / 2.0)

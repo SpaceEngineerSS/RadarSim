@@ -171,7 +171,8 @@ class PulseDopplerProcessor:
             delays = np.rint(
                 2.0 * apparent_ranges * self.sample_rate_hz / C_LIGHT
             ).astype(int)
-            doppler_hz = 2.0 * velocity / self.wavelength_m
+            # Echo phase -4*pi*R(t)/lambda gives fd = -2*v_r/lambda (v_r > 0 receding).
+            doppler_hz = -2.0 * velocity / self.wavelength_m
             fast_phase = np.exp(1j * 2.0 * np.pi * doppler_hz * fast_time)
             pulse_phase = np.exp(1j * 2.0 * np.pi * doppler_hz * pulse_times)
             echo = amplitude * self._ref_chirp * fast_phase
@@ -254,13 +255,15 @@ class PulseDopplerProcessor:
         compressed = self.range_compress(raw_iq)
         filtered = self.mti_cancel(compressed)
         rd_complex = self.doppler_fft(filtered)
+        n_doppler = rd_complex.shape[0]
+        doppler_axis = np.fft.fftshift(np.fft.fftfreq(n_doppler, d=self.pri_s))
+        # v_r = -fd * lambda / 2; reorder rows so the velocity axis is ascending.
+        order = np.argsort(-doppler_axis, kind="stable")
+        doppler_axis = doppler_axis[order]
+        rd_complex = rd_complex[order]
+        velocity_axis = -doppler_axis * self.wavelength_m / 2.0
         rd_power = np.abs(rd_complex) ** 2
         rd_db = 10.0 * np.log10(np.maximum(rd_power, np.finfo(float).tiny))
-        n_doppler = rd_complex.shape[0]
-        doppler_axis = np.fft.fftshift(
-            np.fft.fftfreq(n_doppler, d=self.pri_s)
-        )
-        velocity_axis = doppler_axis * self.wavelength_m / 2.0
         window = self._generate_window(n_doppler, self.window_type)
         enbw = self.window_enbw_bins(window)
 
@@ -334,7 +337,7 @@ class PulseDopplerProcessor:
 
     def _velocity_axis(self, sample_count: int) -> np.ndarray:
         frequencies = np.fft.fftshift(np.fft.fftfreq(sample_count, d=self.pri_s))
-        return frequencies * self.wavelength_m / 2.0
+        return np.sort(-frequencies * self.wavelength_m / 2.0)
 
     @staticmethod
     def get_blind_speed(wavelength_m: float, prf_hz: float) -> float:
@@ -365,6 +368,18 @@ def validate_pulse_doppler() -> dict:
         window_type="none",
     )
     expected_gain = 10.0 * np.log10(processor.tbp)
+
+    # A stationary (DC) slow-time sequence must be nulled by the delay-line canceller.
+    dc_sequence = np.ones((processor.n_pulses, 1), dtype=np.complex128)
+    mti_residual_db = {}
+    for order in (1, 2):
+        residual = np.diff(dc_sequence, n=order, axis=0)
+        residual_power = float(np.mean(np.abs(residual) ** 2))
+        mti_residual_db[order] = (
+            -np.inf if residual_power == 0.0 else 10.0 * np.log10(residual_power)
+        )
+    blind_speed_expected = processor.wavelength_m * processor.prf_hz / 2.0
+
     target_range = 12_000.0
     target_velocity = 5.0
     result = processor.process_cpi(
@@ -385,10 +400,10 @@ def validate_pulse_doppler() -> dict:
             "pass": abs(processor.processing_gain_db - expected_gain) < 0.1,
         },
         "mti_dc_null": {
-            "order_1_atten_db": np.inf,
-            "order_2_atten_db": np.inf,
-            "pass_order_1": True,
-            "pass_order_2": True,
+            "order_1_residual_db": mti_residual_db[1],
+            "order_2_residual_db": mti_residual_db[2],
+            "pass_order_1": mti_residual_db[1] < -100.0,
+            "pass_order_2": mti_residual_db[2] < -100.0,
         },
         "target_localization": {
             "true_range_m": target_range,
@@ -404,7 +419,9 @@ def validate_pulse_doppler() -> dict:
         },
         "blind_speed": {
             "computed_mps": processor.blind_speeds_mps[0],
-            "expected_mps": processor.wavelength_m * processor.prf_hz / 2.0,
-            "pass": True,
+            "expected_mps": blind_speed_expected,
+            "pass": bool(
+                np.isclose(processor.blind_speeds_mps[0], blind_speed_expected, rtol=1e-9)
+            ),
         },
     }

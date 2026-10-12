@@ -17,6 +17,7 @@ References:
     - Skolnik, "Radar Handbook", 3rd Ed., Chapter 2
 """
 
+import functools
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -73,6 +74,15 @@ def albersheim_snr(pd: float, pfa: float, n_pulses: int = 1) -> float:
     return float(-5.0 * np.log10(n_pulses) + integration_factor * np.log10(argument))
 
 
+@functools.lru_cache(maxsize=64)
+def _laguerre_rule(order: int, alpha: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Generalized Gauss-Laguerre nodes and weights (cached; costly to build)."""
+    nodes, weights = special.roots_genlaguerre(order, alpha)
+    nodes.setflags(write=False)
+    weights.setflags(write=False)
+    return nodes, weights
+
+
 def _fluctuating_target_pd(
     snr_linear: float,
     threshold: float,
@@ -89,7 +99,7 @@ def _fluctuating_target_pd(
             )
         )
 
-    nodes, weights = special.roots_genlaguerre(quadrature_order, gamma_shape - 1.0)
+    nodes, weights = _laguerre_rule(quadrature_order, float(gamma_shape - 1.0))
     rcs_scale = nodes / gamma_shape
     conditional_pd = stats.ncx2.sf(
         2.0 * threshold,

@@ -1,45 +1,46 @@
 """
 Headless Simulation Runner
 
-Runs radar simulation without GUI for batch processing and Monte Carlo analysis.
+Monte Carlo detection statistics for one radar and one target, computed with the
+same ``SimulationEngine`` physics the GUI uses (radar equation, ITU-R P.676
+attenuation, Swerling Pd at the configured Pfa). No GUI dependencies.
 
-Features:
-    - No GUI dependencies
-    - Time-step based execution
-    - Results collection (detection logs)
-    - Memory-efficient cleanup
+Each engine step is one independent look (dwell) at the target; the target flies
+radially at ``target_velocity_mps`` (positive = receding).
 
 Usage:
-    config = SimulationConfig(...)
-    runner = HeadlessRunner(config)
-    result = runner.run()
+    config = SimulationConfig(target_range_m=40e3, target_rcs_m2=2.0, seed=1)
+    result = HeadlessRunner(config).run()
 """
 
-import gc
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-# Import physics without GUI dependencies
-from src.physics import ITU_R_P676, RadarParameters, calculate_snr
+from src.physics.rcs import SwerlingModel
+from src.simulation.engine import SimulationEngine
+from src.simulation.objects import MotionModel, Radar, Target
 
 
 @dataclass
 class SimulationConfig:
     """
-    Configuration for headless simulation.
+    Configuration for a headless Monte Carlo run.
 
     Attributes:
-        radar_params: Radar system parameters
-        target_range_m: Target distance from radar [m]
-        target_rcs_m2: Target radar cross section [m²]
-        target_velocity_mps: Target velocity [m/s] (optional)
-        duration_s: Simulation duration [s]
-        dt_s: Time step [s]
-        detection_threshold_db: SNR threshold for detection [dB]
-        enable_atmospheric: Enable ITU-R atmospheric loss
+        frequency_hz, power_watts, antenna_gain_db, noise_figure_db: Radar
+        target_range_m: Initial slant range [m]
+        target_rcs_m2: Mean RCS [m²]
+        target_velocity_mps: Radial velocity [m/s] (positive = receding)
+        swerling_case: Swerling fluctuation model 0-4
+        duration_s: Simulated time [s]
+        dt_s: Time between looks [s]
+        prf_hz, pulse_width_s: Waveform
+        probability_false_alarm: Detector Pfa per cell
+        pulses_integrated: Non-coherently integrated pulses per look
+        enable_atmospheric: Apply ITU-R P.676 gaseous attenuation
         seed: Random seed for reproducibility
     """
 
@@ -53,50 +54,73 @@ class SimulationConfig:
     target_range_m: float = 50000.0
     target_rcs_m2: float = 1.0
     target_velocity_mps: float = 0.0
+    swerling_case: int = 1
 
     # Simulation
     duration_s: float = 10.0
-    dt_s: float = 0.033  # ~30 FPS
+    dt_s: float = 0.033
     prf_hz: float = 1000.0
-    detection_threshold_db: float = 13.0
+    pulse_width_s: float = 1e-6
+    probability_false_alarm: float = 1e-6
+    pulses_integrated: int = 1
 
     # Options
     enable_atmospheric: bool = True
     seed: Optional[int] = None
 
-    def to_radar_params(self) -> RadarParameters:
-        """Convert to RadarParameters object."""
-        return RadarParameters(
-            frequency=self.frequency_hz,
-            power_transmitted=self.power_watts,
-            antenna_gain_tx=self.antenna_gain_db,
-            antenna_gain_rx=self.antenna_gain_db,
-            noise_figure=self.noise_figure_db,
-            pulse_width=1e-6,
-            prf=self.prf_hz,
+    def build_engine(self) -> SimulationEngine:
+        """Create the engine for this configuration (radar at origin, target North)."""
+        radar = Radar(
+            radar_id="headless",
+            position=np.zeros(3),
+            frequency_hz=self.frequency_hz,
+            power_watts=self.power_watts,
+            antenna_gain_db=self.antenna_gain_db,
+            noise_figure_db=self.noise_figure_db,
+            prf_hz=self.prf_hz,
+            pulse_width_s=self.pulse_width_s,
+            scan_rate_rpm=0.0,
+        )
+        target = Target(
+            target_id=1,
+            position=np.array([0.0, self.target_range_m, 0.0]),
+            velocity=np.array([0.0, self.target_velocity_mps, 0.0]),
+            rcs_m2=self.target_rcs_m2,
+            swerling_model=SwerlingModel(self.swerling_case),
+            motion_model=MotionModel.CONSTANT_VELOCITY,
+        )
+        return SimulationEngine(
+            radar=radar,
+            targets=[target],
+            dt=self.dt_s,
+            enable_atmospheric=self.enable_atmospheric,
+            probability_false_alarm=self.probability_false_alarm,
+            pulses_integrated=self.pulses_integrated,
+            seed=self.seed,
+            scan_gated_detection=False,
         )
 
 
 @dataclass
 class SimulationResult:
     """
-    Results from a headless simulation run.
+    Results from a headless run.
 
     Attributes:
         config: Original configuration
-        n_pulses: Total pulses transmitted
-        n_detections: Number of successful detections
-        detection_ratio: Pd = n_detections / n_pulses
-        mean_snr_db: Average SNR over simulation
-        min_snr_db: Minimum SNR
-        max_snr_db: Maximum SNR
+        n_looks: Detection opportunities (one per step)
+        n_detections: Successful detections
+        detection_ratio: Empirical Pd = n_detections / n_looks
+        mean_pd: Mean theoretical Pd over the looks
+        mean_snr_db, min_snr_db, max_snr_db: SNR statistics [dB]
         runtime_s: Wall-clock execution time
     """
 
     config: SimulationConfig
-    n_pulses: int = 0
+    n_looks: int = 0
     n_detections: int = 0
     detection_ratio: float = 0.0
+    mean_pd: float = 0.0
     mean_snr_db: float = 0.0
     min_snr_db: float = 0.0
     max_snr_db: float = 0.0
@@ -108,152 +132,60 @@ class SimulationResult:
         return {
             "range_km": self.config.target_range_m / 1000,
             "rcs_m2": self.config.target_rcs_m2,
+            "swerling_case": self.config.swerling_case,
             "frequency_ghz": self.config.frequency_hz / 1e9,
             "power_kw": self.config.power_watts / 1e3,
-            "n_pulses": self.n_pulses,
+            "pfa": self.config.probability_false_alarm,
+            "n_looks": self.n_looks,
             "n_detections": self.n_detections,
             "detection_ratio": self.detection_ratio,
+            "mean_pd": self.mean_pd,
             "mean_snr_db": self.mean_snr_db,
             "min_snr_db": self.min_snr_db,
             "max_snr_db": self.max_snr_db,
             "runtime_s": self.runtime_s,
-            "threshold_db": self.config.detection_threshold_db,
+            "seed": self.config.seed,
         }
 
 
 class HeadlessRunner:
-    """
-    Headless simulation runner.
-
-    Executes radar simulation without GUI, collecting detection
-    statistics for Monte Carlo analysis.
-    """
+    """Runs one ``SimulationConfig`` through the engine and collects statistics."""
 
     def __init__(self, config: SimulationConfig):
-        """
-        Initialize headless runner.
-
-        Args:
-            config: Simulation configuration
-        """
         self.config = config
-        self.radar_params = config.to_radar_params()
-
-        # Set random seed if provided
-        if config.seed is not None:
-            np.random.seed(config.seed)
-
-        # State
-        self.current_time = 0.0
-        self.target_range = config.target_range_m
-
-        # Results accumulators
-        self._snr_values: List[float] = []
-        self._detections: List[bool] = []
 
     def run(self) -> SimulationResult:
-        """
-        Execute simulation.
-
-        Returns:
-            SimulationResult with detection statistics
-        """
         start_time = time.perf_counter()
+        engine = self.config.build_engine()
+        n_steps = int(round(self.config.duration_s / self.config.dt_s))
 
-        # Reset state
-        self.current_time = 0.0
-        self.target_range = self.config.target_range_m
-        self._snr_values = []
-        self._detections = []
-
-        # Time loop
-        n_steps = int(self.config.duration_s / self.config.dt_s)
-        pulses_per_step = int(self.config.prf_hz * self.config.dt_s)
-
-        for step in range(n_steps):
-            self.current_time = step * self.config.dt_s
-
-            # Update target position (if moving)
-            if self.config.target_velocity_mps != 0:
-                self.target_range += self.config.target_velocity_mps * self.config.dt_s
-
-            # Skip if target out of range
-            if self.target_range <= 0:
+        snr_values: List[float] = []
+        pd_values: List[float] = []
+        detections = 0
+        for _ in range(n_steps):
+            result = engine.step()[0]
+            if result.true_range_m <= 0.0:
                 continue
+            snr_values.append(result.snr_db)
+            pd_values.append(result.pd)
+            detections += int(result.is_detected)
 
-            # Calculate atmospheric loss if enabled
-            atm_loss_db = 0.0
-            if self.config.enable_atmospheric:
-                freq_ghz = self.config.frequency_hz / 1e9
-                range_km = self.target_range / 1000
-                if freq_ghz >= 1.0:
-                    atm_loss_db = ITU_R_P676.total_attenuation(
-                        range_km, freq_ghz, two_way=True
-                    )
-
-            # Calculate SNR
-            snr_db = calculate_snr(
-                self.radar_params,
-                self.config.target_rcs_m2,
-                self.target_range,
-                atmospheric_loss_db=atm_loss_db,
-            )
-
-            # Add noise fluctuation (Swerling-like)
-            snr_db += np.random.normal(0, 1.5)
-
-            # Process pulses
-            for _ in range(max(1, pulses_per_step)):
-                self._snr_values.append(snr_db)
-                detected = snr_db > self.config.detection_threshold_db
-                self._detections.append(detected)
-
-        # Calculate runtime
-        runtime = time.perf_counter() - start_time
-
-        # Build result
-        result = self._build_result(runtime)
-
-        # Cleanup
-        self._cleanup()
-
-        return result
-
-    def _build_result(self, runtime: float) -> SimulationResult:
-        """Build simulation result from accumulated data."""
-        n_pulses = len(self._detections)
-        n_detections = sum(self._detections)
-
-        snr_array = np.array(self._snr_values) if self._snr_values else np.array([0])
-
+        snr = np.array(snr_values) if snr_values else np.array([0.0])
+        n_looks = len(snr_values)
         return SimulationResult(
             config=self.config,
-            n_pulses=n_pulses,
-            n_detections=n_detections,
-            detection_ratio=n_detections / n_pulses if n_pulses > 0 else 0.0,
-            mean_snr_db=float(np.mean(snr_array)),
-            min_snr_db=float(np.min(snr_array)),
-            max_snr_db=float(np.max(snr_array)),
-            runtime_s=runtime,
-            snr_history=self._snr_values[:100],  # Keep first 100 for debugging
+            n_looks=n_looks,
+            n_detections=detections,
+            detection_ratio=detections / n_looks if n_looks else 0.0,
+            mean_pd=float(np.mean(pd_values)) if pd_values else 0.0,
+            mean_snr_db=float(np.mean(snr)),
+            min_snr_db=float(np.min(snr)),
+            max_snr_db=float(np.max(snr)),
+            runtime_s=time.perf_counter() - start_time,
+            snr_history=snr_values[:100],
         )
-
-    def _cleanup(self) -> None:
-        """Clean up memory after run."""
-        self._snr_values = []
-        self._detections = []
-        gc.collect()
 
 
 def run_single_simulation(config: SimulationConfig) -> SimulationResult:
-    """
-    Convenience function for multiprocessing.
-
-    Args:
-        config: Simulation configuration
-
-    Returns:
-        Simulation result
-    """
-    runner = HeadlessRunner(config)
-    return runner.run()
+    """Convenience function for multiprocessing."""
+    return HeadlessRunner(config).run()

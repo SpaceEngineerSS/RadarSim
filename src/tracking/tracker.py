@@ -15,13 +15,19 @@ Reference:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import chi2
 
+from src.physics.geometry import heading_from_velocity
+
 from .kalman import KalmanState, LinearKalmanFilter
+
+# Predicate telling whether a track position (x, y) was inside the radar's
+# coverage during the current update (e.g. swept by the beam this step).
+CoveragePredicate = Callable[[Tuple[float, float]], bool]
 
 # Extended Kalman filter
 try:
@@ -68,6 +74,8 @@ class Track:
     last_update: float = 0.0
     current_time: float = 0.0
     history: List[Tuple[float, float]] = field(default_factory=list)
+    # Last associated measurement, used for two-point velocity initiation.
+    last_measurement: Optional[Tuple[float, float]] = None
 
     # Optional classification metadata supplied by a caller.
     classification: str = "Unknown"
@@ -90,8 +98,8 @@ class Track:
 
     @property
     def heading_rad(self) -> float:
-        """Get heading in radians (0 = North, CW positive)."""
-        return np.arctan2(self.state.x[3], self.state.x[2])
+        """Heading in radians, clockwise from North (ENU frame)."""
+        return heading_from_velocity(self.state.x[2:4])
 
     @property
     def age_seconds(self) -> float:
@@ -127,6 +135,8 @@ class TrackManager:
         process_noise: float = 5.0,
         measurement_noise: float = 50.0,
         gate_probability: float = 0.9973,
+        max_target_speed_mps: float = 2000.0,
+        tentative_max_misses: int = 2,
     ) -> None:
         """
         Initialize Track Manager.
@@ -138,6 +148,9 @@ class TrackManager:
             max_history: Maximum track history length
             process_noise: Kalman filter process noise
             measurement_noise: Kalman filter measurement noise
+            gate_probability: Chi-square gate probability for confirmed tracks
+            max_target_speed_mps: Velocity gate for two-point track initiation
+            tentative_max_misses: Misses that delete a not-yet-confirmed track
         """
         if gate_distance <= 0.0 or measurement_noise <= 0.0:
             raise ValueError("gate distance and measurement noise must be positive")
@@ -153,6 +166,10 @@ class TrackManager:
             raise ValueError("gate_probability must be between zero and one")
         self.gate_probability = gate_probability
         self.gate_threshold = float(chi2.ppf(gate_probability, df=2))
+        if max_target_speed_mps <= 0.0 or tentative_max_misses < 1:
+            raise ValueError("max_target_speed_mps and tentative_max_misses must be positive")
+        self.max_target_speed_mps = max_target_speed_mps
+        self.tentative_max_misses = tentative_max_misses
 
         # Kalman filter for all tracks
         self.kf = LinearKalmanFilter(
@@ -172,9 +189,17 @@ class TrackManager:
         detections: List[Tuple[float, float]],
         dt: float,
         detection_data: Optional[List[Dict]] = None,
+        in_coverage: Optional[CoveragePredicate] = None,
+        revisit_guard_s: float = 0.0,
     ) -> List[Track]:
         """
         Process new detections and update tracks.
+
+        Track-while-scan: with ``in_coverage`` given, an unassociated track is
+        charged a miss only if its predicted position was inside this update's
+        coverage and it has not been updated within ``revisit_guard_s`` (it was
+        already seen during the current scan). Other tracks are only predicted.
+        Without ``in_coverage`` every unassociated track is charged a miss.
 
         Steps:
             1. Predict all existing tracks
@@ -188,6 +213,8 @@ class TrackManager:
             detections: List of (x, y) position measurements
             dt: Time since last update (seconds)
             detection_data: Optional metadata for each detection
+            in_coverage: Optional coverage predicate (see above)
+            revisit_guard_s: Minimum time between two looks at the same track [s]
 
         Returns:
             List of active tracks
@@ -196,6 +223,7 @@ class TrackManager:
             raise ValueError("dt must be positive")
         self.current_time += dt
         current_time = self.current_time
+        covered = (lambda _position: True) if in_coverage is None else in_coverage
 
         # 1. Predict all tracks
         for track in self.tracks.values():
@@ -205,7 +233,7 @@ class TrackManager:
                 else:
                     track.state = self.kf.predict(track.state, dt)
 
-        # 2. Data association (Nearest-Neighbor with gating)
+        # 2. Data association (global nearest neighbour with gating)
         associations, unassigned_detections, unassigned_tracks = self._associate(
             detections
         )
@@ -215,11 +243,18 @@ class TrackManager:
             track = self.tracks[track_id]
             measurement = detections[det_idx]
 
-            # Kalman update (EKF or Linear)
-            if self.use_ekf and self._ekf is not None:
+            if track.hits == 1 and track.last_measurement is not None:
+                # Two-point differencing initiation (Bar-Shalom et al. 2001, 5.5.3)
+                track.state = self._two_point_state(
+                    track.last_measurement,
+                    measurement,
+                    current_time - track.last_update,
+                )
+            elif self.use_ekf and self._ekf is not None:
                 track.state = self._ekf.update_cartesian(track.state, measurement)
             else:
                 track.state = self.kf.update(track.state, measurement)
+            track.last_measurement = tuple(measurement)
             track.last_update = current_time
             track.hits += 1
             track.consecutive_hits += 1
@@ -248,9 +283,15 @@ class TrackManager:
                 if "confidence" in data:
                     track.confidence = data["confidence"]
 
-        # 4. Coast unassigned tracks
+        # 4. Charge a miss to unassociated tracks the radar looked at this update
         for track_id in unassigned_tracks:
             track = self.tracks[track_id]
+            looked_at = covered(track.position) and (
+                current_time - track.last_update >= revisit_guard_s
+            )
+            if not looked_at:
+                track.current_time = current_time
+                continue
             track.misses += 1
             track.consecutive_hits = 0
             track.current_time = current_time
@@ -258,8 +299,13 @@ class TrackManager:
             if track.status == TrackStatus.CONFIRMED:
                 track.status = TrackStatus.COASTING
 
-            # Delete if too many misses
-            if track.misses >= self.max_misses:
+            # Delete if too many misses (tentative tracks are dropped sooner)
+            limit = (
+                self.tentative_max_misses
+                if track.status == TrackStatus.TENTATIVE
+                else self.max_misses
+            )
+            if track.misses >= limit:
                 track.status = TrackStatus.DELETED
 
             # Still update history with predicted position
@@ -282,29 +328,49 @@ class TrackManager:
         return list(self.tracks.values())
 
     def _associate(
-        self, detections: List[Tuple[float, float]]
+        self,
+        detections: List[Tuple[float, float]],
+        track_ids: Optional[List[int]] = None,
     ) -> Tuple[Dict[int, int], List[int], List[int]]:
         """
-        Nearest-Neighbor data association with gating.
+        Global nearest-neighbour association (Hungarian) with gating.
+
+        Tracks with a single detection have no velocity estimate yet, so they use
+        a velocity gate |dz| <= v_max * dt + 3 sigma instead of the chi-square gate.
 
         Returns:
             - associations: {track_id: detection_index}
             - unassigned_detections: [detection indices]
             - unassigned_tracks: [track ids]
         """
-        if not detections or not self.tracks:
-            return (
-                {},
-                list(range(len(detections))),
-                list(self.tracks.keys()),
-            )
-
+        if track_ids is None:
+            track_ids = list(self.tracks.keys())
         track_ids = [
-            tid for tid, t in self.tracks.items() if t.status != TrackStatus.DELETED
+            tid for tid in track_ids if self.tracks[tid].status != TrackStatus.DELETED
         ]
+        if not detections or not track_ids:
+            return {}, list(range(len(detections))), track_ids
+
         cost = np.full((len(track_ids), len(detections)), np.inf)
         for row, track_id in enumerate(track_ids):
             track = self.tracks[track_id]
+            if track.hits == 1 and track.last_measurement is not None:
+                elapsed = max(self.current_time - track.last_update, 0.0)
+                velocity_gate = (
+                    self.max_target_speed_mps * elapsed
+                    + 3.0 * np.sqrt(2.0) * self.kf.measurement_noise
+                )
+                for col, detection in enumerate(detections):
+                    distance = float(
+                        np.linalg.norm(
+                            np.asarray(detection) - np.asarray(track.last_measurement)
+                        )
+                    )
+                    if distance <= velocity_gate:
+                        # Scale to the chi-square gate so costs are comparable.
+                        cost[row, col] = self.gate_threshold * (distance / velocity_gate) ** 2
+                continue
+
             innovation_covariance = (
                 self.kf.H @ track.state.P @ self.kf.H.T + self.kf.R
             )
@@ -357,6 +423,7 @@ class TrackManager:
             creation_time=self.current_time,
             last_update=self.current_time,
             current_time=self.current_time,
+            last_measurement=tuple(measurement),
         )
         track.history.append(measurement)
 
@@ -372,6 +439,36 @@ class TrackManager:
         self._next_id += 1
 
         return track
+
+    def _two_point_state(
+        self,
+        first: Tuple[float, float],
+        second: Tuple[float, float],
+        elapsed_s: float,
+    ) -> KalmanState:
+        """
+        State from two position measurements: velocity by differencing.
+
+        Per axis, with measurement variance r: P = [[r, r/T], [r/T, 2r/T^2]].
+        """
+        elapsed_s = max(elapsed_s, 1e-6)
+        first_arr = np.asarray(first, dtype=np.float64)
+        second_arr = np.asarray(second, dtype=np.float64)
+        velocity = (second_arr - first_arr) / elapsed_s
+        r = self.kf.measurement_noise**2
+        p_pos, p_cross, p_vel = r, r / elapsed_s, 2.0 * r / elapsed_s**2
+        covariance = np.array(
+            [
+                [p_pos, 0.0, p_cross, 0.0],
+                [0.0, p_pos, 0.0, p_cross],
+                [p_cross, 0.0, p_vel, 0.0],
+                [0.0, p_cross, 0.0, p_vel],
+            ]
+        )
+        return KalmanState(
+            x=np.array([second_arr[0], second_arr[1], velocity[0], velocity[1]]),
+            P=covariance,
+        )
 
     def get_confirmed_tracks(self) -> List[Track]:
         """Get established tracks, including tracks currently coasting."""

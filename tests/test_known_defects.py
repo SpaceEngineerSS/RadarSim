@@ -21,7 +21,6 @@ from src.simulation.objects import MotionModel, Radar, Target
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 
-PHASE2 = "Phase 2: physics/convention fix pending"
 PHASE3 = "Phase 3: scenario support pending"
 
 
@@ -113,7 +112,6 @@ def test_replay_accepts_non_integer_target_ids(tmp_path):
 # =============================================================================
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_beam_check_handles_azimuth_wrap():
     """A target 180 deg away from boresight must not be reported in-beam."""
     radar = Radar("test", position=np.zeros(3), beamwidth_deg=2.0)
@@ -122,7 +120,6 @@ def test_beam_check_handles_azimuth_wrap():
     assert radar.is_target_in_beam(target_pos) is False
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_sinc_pattern_is_half_power_at_half_beamwidth():
     from src.signal.antenna_pattern import AntennaPattern
 
@@ -131,7 +128,6 @@ def test_sinc_pattern_is_half_power_at_half_beamwidth():
     assert gain == pytest.approx(0.5, abs=0.01)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_doppler_sign_convention_receding_is_negative():
     """Convention: fd = -2 vr / lambda with vr > 0 receding."""
     from src.physics.radar_equation import RadarParameters, calculate_doppler_shift
@@ -142,7 +138,6 @@ def test_doppler_sign_convention_receding_is_negative():
     assert fd == pytest.approx(-2.0 * 100.0 / radar.wavelength, rel=1e-9)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_azimuth_is_measured_clockwise_from_north():
     """ENU frame: x = East, y = North. A target due East is at azimuth +90 deg."""
     radar = Radar("test", position=np.zeros(3))
@@ -150,7 +145,6 @@ def test_azimuth_is_measured_clockwise_from_north():
     assert geom["azimuth_deg"] == pytest.approx(90.0)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_coordinated_turn_target_moves():
     target = Target(
         1,
@@ -162,7 +156,6 @@ def test_coordinated_turn_target_moves():
     assert np.linalg.norm(target.position) == pytest.approx(200.0, rel=0.01)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_mountain_peaks_block_line_of_sight():
     """The LOS raycast ignored TerrainConfig.mountain_peaks."""
     from src.physics.terrain import TerrainConfig, TerrainMap
@@ -177,17 +170,19 @@ def test_mountain_peaks_block_line_of_sight():
     assert TerrainMap(peaked).check_line_of_sight(radar_pos, target_pos)[0] is False
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=PHASE2)
 def test_engine_seed_gives_identical_runs():
     def run(seed):
-        engine = _engine(seed=seed)
+        engine = _engine(seed=seed, scan_gated_detection=False)
         engine.targets[0].swerling_model = SwerlingModel.SWERLING_1
-        return [(r.snr_db, r.is_detected, r.measured_range_m) for r in engine.run(2.0).results]
+        history = engine.run(2.0).detection_history
+        return [(r.is_detected, round(float(np.nan_to_num(r.measured_range_m)), 6)) for r in history]
 
-    assert run(1234) == run(1234)
+    first = run(1234)
+    assert len(first) == 20
+    assert first == run(1234)
+    assert first != run(4321)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_reset_restores_target_positions():
     engine = _engine()
     start = engine.targets[0].position.copy()
@@ -196,7 +191,6 @@ def test_reset_restores_target_positions():
     np.testing.assert_allclose(engine.targets[0].position, start)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE2)
 def test_run_step_count_does_not_truncate():
     engine = _engine()
     engine.dt = 0.1

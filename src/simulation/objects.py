@@ -26,6 +26,11 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.physics.geometry import (
+    heading_from_velocity,
+    polar_from_enu,
+    wrap_to_pi,
+)
 from src.physics.rcs import (
     SwerlingModel,
     SwerlingRCS,
@@ -39,7 +44,7 @@ class MotionModel(Enum):
     STATIC = "static"  # No motion
     CONSTANT_VELOCITY = "cv"  # Constant velocity
     CONSTANT_ACCELERATION = "ca"  # Constant acceleration
-    COORDINATED_TURN = "ct"  # Coordinated turn (2D)
+    COORDINATED_TURN = "ct"  # Constant-rate horizontal turn
 
 
 @dataclass
@@ -49,10 +54,10 @@ class KinematicState:
 
     State: [x, y, z, vx, vy, vz, ax, ay, az]
 
-    Coordinate system: North-East-Down (NED)
-    - x: North [m]
-    - y: East [m]
-    - z: Down [m] (altitude is negative z)
+    Coordinate system: East-North-Up (ENU), see ``src.physics.geometry``
+    - x: East [m]
+    - y: North [m]
+    - z: Up [m] (altitude above the local ground plane)
 
     Attributes:
         position: [x, y, z] position [m]
@@ -105,13 +110,13 @@ class KinematicState:
 
     @property
     def heading(self) -> float:
-        """Heading angle [rad] (0 = North, π/2 = East)."""
-        return np.arctan2(self.velocity[1], self.velocity[0])
+        """Heading angle [rad], clockwise from North (0 = North, π/2 = East)."""
+        return heading_from_velocity(self.velocity)
 
     @property
     def altitude(self) -> float:
-        """Altitude [m] (positive up, opposite of z)."""
-        return -self.position[2]
+        """Altitude above the local ground plane [m]."""
+        return float(self.position[2])
 
 
 @numba.jit(nopython=True, cache=True)
@@ -166,6 +171,33 @@ def _update_kinematics_ca(
     return new_pos, new_vel, new_acc
 
 
+def _update_kinematics_ct(
+    pos: np.ndarray, vel: np.ndarray, turn_rate_rad_s: float, dt: float
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Exact constant-rate coordinated-turn propagation in the horizontal plane.
+
+    ``turn_rate_rad_s`` is the heading rate, positive clockwise (right turn), matching
+    the azimuth convention. Vertical motion is constant velocity.
+
+    Reference: Bar-Shalom, Li & Kirubarajan (2001), Sec. 11.7.1, Eq. 11.7.1-4
+    """
+    # Bar-Shalom's Omega is counter-clockwise in the x-y plane.
+    omega = -turn_rate_rad_s
+    if abs(omega) < 1e-12:
+        return _update_kinematics_cv(pos, vel, dt)
+    s, c = np.sin(omega * dt), np.cos(omega * dt)
+    vx, vy = vel[0], vel[1]
+    new_pos = pos.copy()
+    new_pos[0] += (s * vx - (1.0 - c) * vy) / omega
+    new_pos[1] += ((1.0 - c) * vx + s * vy) / omega
+    new_pos[2] += vel[2] * dt
+    new_vel = vel.copy()
+    new_vel[0] = c * vx - s * vy
+    new_vel[1] = s * vx + c * vy
+    return new_pos, new_vel
+
+
 class Target:
     """
     Radar target with 3D kinematics and RCS model.
@@ -197,6 +229,8 @@ class Target:
         drfm_vgpo_rate_hz_per_s: float = 50.0,
         drfm_max_doppler_pull_hz: float = 500.0,
         drfm_inherent_delay_s: float = 0.0,
+        turn_rate_rad_s: float = 0.0,
+        name: Optional[str] = None,
     ):
         """
         Initialize target.
@@ -214,9 +248,13 @@ class Target:
             jammer_power_watts: Jammer ERP if has_jammer is True [W]
             jammer_bandwidth_hz: Jammer bandwidth [Hz]
             ecm_type: Jammer or deception technique identifier
+            turn_rate_rad_s: Heading rate for COORDINATED_TURN, positive clockwise
+            name: Display name (defaults to "<type> <id>")
         """
         self.target_id = target_id
         self.target_type = target_type
+        self.name = name if name else f"{target_type} {target_id}"
+        self.turn_rate_rad_s = float(turn_rate_rad_s)
         self.rcs_mean = rcs_m2
         self.swerling_model = swerling_model
         self.motion_model = motion_model
@@ -294,34 +332,43 @@ class Target:
             self.state.velocity = new_vel
             self.state.acceleration = new_acc
 
+        elif self.motion_model == MotionModel.COORDINATED_TURN:
+            new_pos, new_vel = _update_kinematics_ct(
+                self.state.position, self.state.velocity, self.turn_rate_rad_s, dt
+            )
+            self.state.position = new_pos
+            self.state.velocity = new_vel
+
         # Store history (limit to last 1000 points)
         self._position_history.append(self.state.position.copy())
         if len(self._position_history) > 1000:
             self._position_history.pop(0)
 
-    def get_rcs(self, radar_position: np.ndarray = None) -> float:
+    def mean_rcs(self, radar_position: np.ndarray = None) -> float:
         """
-        Get current RCS with Swerling fluctuation.
+        Aspect-dependent mean RCS seen from ``radar_position`` [m²].
 
-        Args:
-            radar_position: Radar position for aspect angle calculation
-
-        Returns:
-            Fluctuated RCS [m²]
+        The Swerling fluctuation is *not* applied here: the detection model integrates
+        over the fluctuation statistics, so sampling it as well would count it twice.
         """
         mean_rcs = self.rcs_mean
-
-        # Apply aspect angle factor if radar position provided
-        if radar_position is not None:
+        if radar_position is not None and self.speed > 1e-3:
             aspect_angle = calculate_aspect_angle(
                 self.state.position, self.state.heading, radar_position
             )
-            # Simple aspect factor (reduced at nose-on/tail-on)
-            aspect_factor = 0.5 + 0.5 * abs(np.sin(aspect_angle))
-            mean_rcs *= aspect_factor
+            # Broadside-dominant aspect weighting (nose/tail at half the beam RCS).
+            mean_rcs *= 0.5 + 0.5 * abs(np.sin(aspect_angle))
+        return mean_rcs
 
-        # Apply Swerling fluctuation
-        return SwerlingRCS.generate_rcs(mean_rcs, self.swerling_model)
+    def get_rcs(
+        self,
+        radar_position: np.ndarray = None,
+        rng: Optional[np.random.Generator] = None,
+    ) -> float:
+        """One Swerling-fluctuated RCS realization [m²] (for signal-level simulation)."""
+        return SwerlingRCS.generate_rcs(
+            self.mean_rcs(radar_position), self.swerling_model, rng=rng
+        )
 
     @property
     def position(self) -> np.ndarray:
@@ -354,6 +401,7 @@ class Target:
         """Convert to dictionary for serialization."""
         return {
             "target_id": self.target_id,
+            "name": self.name,
             "target_type": self.target_type,
             "position": self.state.position.tolist(),
             "velocity": self.state.velocity.tolist(),
@@ -361,6 +409,7 @@ class Target:
             "rcs_mean": self.rcs_mean,
             "swerling_model": self.swerling_model.name,
             "motion_model": self.motion_model.value,
+            "turn_rate_rad_s": self.turn_rate_rad_s,
             "has_jammer": self.has_jammer,
             "jammer_active": self.jammer_active,
             "jammer_power_watts": self.jammer_power_watts,
@@ -402,6 +451,7 @@ class Radar:
         system_temperature_k: float = 290.0,
         system_losses_db: float = 4.0,
         polarization_tilt_deg: float = 0.0,
+        sidelobe_level_db: float = -30.0,
     ):
         """
         Initialize radar.
@@ -423,6 +473,7 @@ class Radar:
             system_temperature_k: Receiver system temperature [K]
             system_losses_db: Combined transmit and receive losses [dB]
             polarization_tilt_deg: Polarization tilt relative to horizontal [degrees]
+            sidelobe_level_db: One-way peak sidelobe level relative to the main beam [dB]
         """
         positive_parameters = {
             "frequency_hz": frequency_hz,
@@ -446,6 +497,8 @@ class Radar:
             )
         if noise_figure_db < 0.0 or system_losses_db < 0.0:
             raise ValueError("noise_figure_db and system_losses_db cannot be negative")
+        if sidelobe_level_db >= 0.0:
+            raise ValueError("sidelobe_level_db must be negative")
 
         self.radar_id = radar_id
         self.frequency_hz = frequency_hz
@@ -461,6 +514,7 @@ class Radar:
         self.system_temperature_k = system_temperature_k
         self.system_losses_db = system_losses_db
         self.polarization_tilt_deg = polarization_tilt_deg
+        self.sidelobe_level_db = sidelobe_level_db
 
         # Kinematic state
         if velocity is None:
@@ -471,8 +525,9 @@ class Radar:
             velocity=np.asarray(velocity, dtype=np.float64),
         )
 
-        # Antenna pointing
+        # Antenna pointing, azimuth clockwise from North
         self.antenna_azimuth = 0.0  # Current azimuth [rad]
+        self.previous_antenna_azimuth = 0.0  # Azimuth at the start of the last step
         self.antenna_elevation = 0.0  # Current elevation [rad]
 
     def update(self, dt: float) -> None:
@@ -489,26 +544,23 @@ class Radar:
             )
             self.state.position = new_pos
 
-        # Update antenna azimuth (scanning)
+        # Antenna rotation, clockwise from North (azimuth convention)
         omega = self.scan_rate_rpm * 2 * np.pi / 60  # rad/s
+        self.previous_antenna_azimuth = self.antenna_azimuth
         self.antenna_azimuth = (self.antenna_azimuth + omega * dt) % (2 * np.pi)
 
     def calculate_target_geometry(
         self, target_position: np.ndarray, target_velocity: np.ndarray = None
     ) -> Dict[str, float]:
         """
-        Calculate relative geometry to a target.
+        Calculate relative geometry to a target (ENU frame).
 
         Returns:
-            Dict with range, azimuth, elevation, radial_velocity
+            Dict with slant range, azimuth (clockwise from North, (-π, π]),
+            elevation and radial velocity (positive = receding)
         """
-        # Range vector
-        delta = target_position - self.state.position
-        range_m = np.linalg.norm(delta)
-
-        # Azimuth and elevation
-        azimuth = np.arctan2(delta[1], delta[0])  # East from North
-        elevation = np.arctan2(delta[2], np.sqrt(delta[0] ** 2 + delta[1] ** 2))
+        delta = np.asarray(target_position, dtype=np.float64) - self.state.position
+        range_m, azimuth, elevation = polar_from_enu(delta)
 
         # Radial velocity (if target has velocity)
         radial_velocity = 0.0
@@ -538,15 +590,11 @@ class Radar:
         """
         geom = self.calculate_target_geometry(target_position)
 
-        # Angular difference from current beam pointing
-        az_diff = abs(geom["azimuth_rad"] - self.antenna_azimuth)
-        if az_diff > np.pi:
-            az_diff = 2 * np.pi - az_diff
-
+        az_diff = abs(wrap_to_pi(geom["azimuth_rad"] - self.antenna_azimuth))
         el_diff = abs(geom["elevation_rad"] - self.antenna_elevation)
 
         # Check if within beamwidth
-        return (
+        return bool(
             az_diff <= self.beamwidth_rad / 2 and el_diff <= self.beamwidth_el_rad / 2
         )
 
@@ -580,6 +628,7 @@ class Radar:
             "system_temperature_k": self.system_temperature_k,
             "system_losses_db": self.system_losses_db,
             "polarization_tilt_deg": self.polarization_tilt_deg,
+            "sidelobe_level_db": self.sidelobe_level_db,
         }
 
 
@@ -596,6 +645,7 @@ class SimulationState:
     targets: Dict[int, Target] = field(default_factory=dict)
     detections: Dict[int, bool] = field(default_factory=dict)
     snr_values: Dict[int, float] = field(default_factory=dict)
+    terrain_masked: Dict[int, bool] = field(default_factory=dict)
 
     def add_target(self, target: Target) -> None:
         """Add a target to the simulation."""

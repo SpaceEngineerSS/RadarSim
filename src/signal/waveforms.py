@@ -481,6 +481,7 @@ def validate_cfar_false_alarm_rate(
     n_samples: int = 100000,
     guard_cells: int = 2,
     reference_cells: int = 16,
+    seed: int = 0,
 ) -> dict:
     """
     Validate CA-CFAR false alarm rate on pure noise.
@@ -498,6 +499,7 @@ def validate_cfar_false_alarm_rate(
         n_samples: Number of noise samples to test
         guard_cells: Guard cells on each side
         reference_cells: Reference cells on each side
+        seed: Seed for the noise realization
 
     Returns:
         Dict with validation results
@@ -505,8 +507,9 @@ def validate_cfar_false_alarm_rate(
     from .cfar import CFARDetector, CFARType
 
     # Generate complex Gaussian noise
-    noise_real = np.random.randn(n_samples)
-    noise_imag = np.random.randn(n_samples)
+    rng = np.random.default_rng(seed)
+    noise_real = rng.standard_normal(n_samples)
+    noise_imag = rng.standard_normal(n_samples)
     noise_complex = noise_real + 1j * noise_imag
 
     # Square for power (Rayleigh-distributed power = exponential)
@@ -531,16 +534,14 @@ def validate_cfar_false_alarm_rate(
     # Measured Pfa
     measured_pfa = n_false_alarms / n_valid if n_valid > 0 else 0
 
-    # Statistical tolerance (3σ binomial)
+    # Statistical tolerance: 4σ binomial (sliding-window decisions are mildly
+    # correlated, so the pure binomial spread is slightly optimistic)
     expected_fa = pfa_target * n_valid
     std_dev = np.sqrt(n_valid * pfa_target * (1 - pfa_target))
-    tolerance_fa = 3 * std_dev
+    tolerance_fa = 4 * std_dev
 
-    # Ratio check (should be close to 1.0)
     ratio = measured_pfa / pfa_target if pfa_target > 0 else 0
-
-    # Valid if within 3σ or ratio is reasonable (0.5 to 2.0)
-    is_valid = abs(n_false_alarms - expected_fa) <= tolerance_fa or 0.3 < ratio < 3.0
+    is_valid = bool(abs(n_false_alarms - expected_fa) <= tolerance_fa)
 
     return {
         "test_parameters": {

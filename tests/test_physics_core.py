@@ -313,7 +313,7 @@ class TestDopplerShift:
 
     Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 3
 
-    Formula: fd = 2 × Vr / λ
+    Formula: fd = -2 × Vr / λ  (Vr > 0 receding)
     """
 
     @pytest.fixture
@@ -323,7 +323,7 @@ class TestDopplerShift:
             frequency=10e9, power_transmitted=1000, antenna_gain_tx=30
         )
 
-    def test_approaching_target_negative_doppler(self, radar_10ghz):
+    def test_approaching_target_positive_doppler(self, radar_10ghz):
         """Target approaching radar should produce positive Doppler shift"""
         # Target at 1 km, approaching at 100 m/s
         target_pos = np.array([1000.0, 0.0, 0.0])
@@ -331,15 +331,15 @@ class TestDopplerShift:
 
         fd = calculate_doppler_shift(radar_10ghz, target_pos, target_vel)
 
-        # fd = 2 × 100 / 0.03 ≈ 6667 Hz (approaching = negative velocity)
-        expected_fd = -2 * 100 / radar_10ghz.wavelength  # Negative = approaching
+        # Vr = -100 m/s (closing) -> fd = +2 × 100 / 0.03 ≈ +6667 Hz
+        expected_fd = 2 * 100 / radar_10ghz.wavelength
 
         assert abs(fd - expected_fd) < 1.0, (
             f"Doppler shift ({fd:.1f} Hz) differs from expected "
             f"({expected_fd:.1f} Hz) by more than 1 Hz"
         )
 
-    def test_receding_target_positive_doppler(self, radar_10ghz):
+    def test_receding_target_negative_doppler(self, radar_10ghz):
         """Target receding from radar should produce negative Doppler shift"""
         # Target at 1 km, receding at 100 m/s
         target_pos = np.array([1000.0, 0.0, 0.0])
@@ -347,8 +347,8 @@ class TestDopplerShift:
 
         fd = calculate_doppler_shift(radar_10ghz, target_pos, target_vel)
 
-        # Receding = positive radial velocity
-        expected_fd = 2 * 100 / radar_10ghz.wavelength
+        # Receding = positive radial velocity = negative Doppler
+        expected_fd = -2 * 100 / radar_10ghz.wavelength
 
         assert abs(fd - expected_fd) < 1.0
 

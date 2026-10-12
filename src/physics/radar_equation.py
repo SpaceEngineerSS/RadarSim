@@ -123,7 +123,7 @@ class RadarPreset:
         self.gain_linear = 30000.0 / (self.beamwidth_deg**2)
         self.gain_db = 10.0 * np.log10(self.gain_linear)
 
-        # Doppler sensitivity (fd = 2v/λ → sensitivity = 2/λ Hz per m/s)
+        # Doppler sensitivity magnitude |dfd/dVr| = 2/λ Hz per m/s
         self.doppler_sensitivity_hz_per_mps = 2.0 / self.wavelength_m
 
     def get_doppler_shift(self, velocity_mps: float) -> float:
@@ -134,9 +134,9 @@ class RadarPreset:
             velocity_mps: Radial velocity [m/s] (positive = receding)
 
         Returns:
-            Doppler shift [Hz]
+            Doppler shift [Hz] (fd = -2 Vr / λ, negative when receding)
         """
-        return velocity_mps * self.doppler_sensitivity_hz_per_mps
+        return -velocity_mps * self.doppler_sensitivity_hz_per_mps
 
     def to_dict(self) -> Dict:
         """Convert preset to dictionary for logging/serialization."""
@@ -444,18 +444,18 @@ def _calculate_doppler_shift_jit(radial_velocity: float, wavelength: float) -> f
     """
     JIT-compiled Doppler shift calculation (monostatic radar)
 
-    fd = 2 * Vr / λ
+    fd = -2 * Vr / λ
 
     Args:
         radial_velocity: Radial velocity [m/s] (positive = receding)
         wavelength: Radar wavelength [m]
 
     Returns:
-        Doppler shift [Hz]
+        Doppler shift [Hz] (negative for a receding target)
 
-    Reference: Skolnik, Chapter 3
+    Reference: Skolnik, Chapter 3; Richards (2005), Eq. 2.42
     """
-    return 2.0 * radial_velocity / wavelength
+    return -2.0 * radial_velocity / wavelength
 
 
 @numba.jit(nopython=True, cache=True)
@@ -672,7 +672,7 @@ def calculate_doppler_shift(
     """
     Calculate Doppler shift for a target.
 
-    fd = 2 * Vr / λ
+    fd = -2 * Vr / λ
 
     Args:
         radar: Radar system parameters
@@ -682,7 +682,7 @@ def calculate_doppler_shift(
         radar_vel: Radar velocity [vx, vy, vz] [m/s] (default: stationary)
 
     Returns:
-        Doppler shift [Hz] (positive = target receding, negative = approaching)
+        Doppler shift [Hz] (negative = target receding, positive = approaching)
 
     Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 3
     """
@@ -729,7 +729,7 @@ def validate_skolnik_example_2_1() -> dict:
         B = 1 MHz (10^6 Hz)
         Lsys = 0 dB (lossless for clean validation)
 
-    Computed SNR should be approximately 13.3 dB
+    Computed SNR should be approximately 17.26 dB
 
     Returns:
         Dict containing computed values, expected values, and validation status

@@ -116,6 +116,39 @@ def _fractal_noise(
     return total / max_value
 
 
+# Gaussian half-width of explicit mountain peaks [m].
+MOUNTAIN_PEAK_SIGMA_M = 10000.0
+
+
+@numba.jit(nopython=True, cache=True)
+def _terrain_height(
+    x: float,
+    y: float,
+    terrain_scale: float,
+    terrain_height_scale: float,
+    octaves: int,
+    persistence: float,
+    lacunarity: float,
+    seed: int,
+    peaks: np.ndarray,
+) -> float:
+    """Terrain height [m] at (x, y): fractal base plus Gaussian mountain peaks."""
+    noise_val = _fractal_noise(
+        x / terrain_scale,
+        y / terrain_scale,
+        octaves=octaves,
+        persistence=persistence,
+        lacunarity=lacunarity,
+        seed=seed,
+    )
+    height = (noise_val + 1.0) * 0.5 * terrain_height_scale
+    two_sigma_sq = 2.0 * MOUNTAIN_PEAK_SIGMA_M * MOUNTAIN_PEAK_SIGMA_M
+    for k in range(peaks.shape[0]):
+        dist_sq = (x - peaks[k, 0]) ** 2 + (y - peaks[k, 1]) ** 2
+        height += peaks[k, 2] * np.exp(-dist_sq / two_sigma_sq)
+    return height
+
+
 @numba.jit(nopython=True, cache=True)
 def _check_los_raycast(
     radar_x: float,
@@ -128,28 +161,23 @@ def _check_los_raycast(
     terrain_height_scale: float,
     num_steps: int,
     seed: int,
+    octaves: int,
+    persistence: float,
+    lacunarity: float,
+    peaks: np.ndarray,
 ) -> Tuple[bool, float, float, float]:
     """
     JIT-compiled raymarching LOS check.
 
-    Steps along the line from radar to target, checking if the ray
-    intersects the terrain at any point.
-
-    Args:
-        radar_x, radar_y, radar_z: Radar position [m]
-        target_x, target_y, target_z: Target position [m]
-        terrain_scale: Horizontal scale of terrain features [m]
-        terrain_height_scale: Maximum terrain height [m]
-        num_steps: Number of ray steps
-        seed: Terrain seed
+    Heights are altitudes above the local surface. Over a spherical Earth the
+    straight ray between the two ends clears the surface by its chord height
+    minus the Earth bulge d1*d2 / (2 k Re) (4/3 Earth model).
 
     Returns:
         Tuple of (is_visible, block_range, block_x, block_y)
-        - is_visible: True if LOS is clear
-        - block_range: Range to blocking terrain (if blocked)
-        - block_x, block_y: Position of blocking terrain
+
+    Reference: Skolnik, "Radar Handbook", 3rd Ed., Sec. 2.12; ITU-R P.453
     """
-    # Direction vector
     dx = target_x - radar_x
     dy = target_y - radar_y
     dz = target_z - radar_z
@@ -157,41 +185,31 @@ def _check_los_raycast(
     total_dist = np.sqrt(dx * dx + dy * dy + dz * dz)
     if total_dist < 1.0:
         return True, 0.0, 0.0, 0.0
-
-    # Normalize
-    dx /= total_dist
-    dy /= total_dist
-    dz /= total_dist
-
-    step_size = total_dist / num_steps
+    ground_dist = np.sqrt(dx * dx + dy * dy)
 
     for i in range(1, num_steps):
-        # Current position along ray
-        t = i * step_size
-        px = radar_x + dx * t
-        py = radar_y + dy * t
-        pz = radar_z + dz * t
+        frac = i / num_steps
+        px = radar_x + dx * frac
+        py = radar_y + dy * frac
+        pz = radar_z + dz * frac
 
-        # Earth curvature correction (4/3 Earth model)
-        # Height loss due to curvature: h = d² / (2 * Re)
-        earth_curve = (t * t) / (2.0 * EARTH_RADIUS_EFFECTIVE)
-        effective_height = pz - earth_curve
+        d1 = frac * ground_dist
+        d2 = ground_dist - d1
+        earth_bulge = d1 * d2 / (2.0 * EARTH_RADIUS_EFFECTIVE)
 
-        # Get terrain height at this point
-        noise_val = _fractal_noise(
-            px / terrain_scale,
-            py / terrain_scale,
-            octaves=4,
-            persistence=0.5,
-            lacunarity=2.0,
-            seed=seed,
+        terrain = _terrain_height(
+            px,
+            py,
+            terrain_scale,
+            terrain_height_scale,
+            octaves,
+            persistence,
+            lacunarity,
+            seed,
+            peaks,
         )
-        # Map noise [-1, 1] to terrain height [0, max_height]
-        terrain_height = (noise_val + 1.0) * 0.5 * terrain_height_scale
-
-        # Check if ray is below terrain
-        if effective_height < terrain_height:
-            return False, t, px, py
+        if pz < terrain + earth_bulge:
+            return False, frac * total_dist, px, py
 
     return True, 0.0, 0.0, 0.0
 
@@ -247,6 +265,7 @@ class TerrainMap:
             config: Terrain configuration (uses defaults if None)
         """
         self.config = config or TerrainConfig()
+        self._peaks = np.array(self.config.mountain_peaks, dtype=np.float64).reshape(-1, 3)
 
         # Cache for performance
         self._elevation_cache: dict = {}
@@ -271,28 +290,19 @@ class TerrainMap:
         if cache_key in self._elevation_cache:
             return self._elevation_cache[cache_key]
 
-        # Base procedural terrain
-        noise_val = _fractal_noise(
-            x / self.config.scale,
-            y / self.config.scale,
-            octaves=self.config.octaves,
-            persistence=self.config.persistence,
-            lacunarity=self.config.lacunarity,
-            seed=self.config.seed,
+        total_height = float(
+            _terrain_height(
+                float(x),
+                float(y),
+                self.config.scale,
+                self.config.max_height,
+                self.config.octaves,
+                self.config.persistence,
+                self.config.lacunarity,
+                self.config.seed,
+                self._peaks,
+            )
         )
-
-        # Map noise [-1, 1] to height [0, max_height]
-        base_height = (noise_val + 1.0) * 0.5 * self.config.max_height
-
-        # Add explicit mountain peaks
-        peak_contribution = 0.0
-        for px, py, peak_height in self.config.mountain_peaks:
-            dist = np.sqrt((x - px) ** 2 + (y - py) ** 2)
-            # Gaussian peak falloff (10 km base radius)
-            peak_radius = 10000.0
-            peak_contribution += peak_height * np.exp(-(dist**2) / (2 * peak_radius**2))
-
-        total_height = base_height + peak_contribution
 
         # Cache result
         if len(self._elevation_cache) < self._cache_max_size:
@@ -342,6 +352,10 @@ class TerrainMap:
             self.config.max_height,
             num_steps,
             self.config.seed,
+            self.config.octaves,
+            self.config.persistence,
+            self.config.lacunarity,
+            self._peaks,
         )
 
         if is_visible:

@@ -244,5 +244,5 @@ class LinearKalmanFilter:
         return np.sqrt(state.x[2] ** 2 + state.x[3] ** 2)
 
     def get_heading(self, state: KalmanState) -> float:
-        """Calculate heading angle (radians, 0 = North, CW positive)."""
-        return np.arctan2(state.x[3], state.x[2])
+        """Heading angle in radians, clockwise from North (ENU frame)."""
+        return float(np.arctan2(state.x[2], state.x[3]))
