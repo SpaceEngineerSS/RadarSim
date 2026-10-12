@@ -148,6 +148,8 @@ class FlightRecorder:
                         "positions": [],
                         "velocities": [],
                         "metadata": {
+                            "name": target.get("name", f"Target {target_id}"),
+                            "affiliation": target.get("affiliation", "unknown"),
                             "type": target.get("type", "unknown"),
                             "rcs_m2": target.get("rcs_m2", 1.0),
                             "has_jammer": target.get("has_jammer", False),

@@ -63,6 +63,8 @@ def _engine_signature(engine):
             "receiver_full_scale_dbm", "ecm_active", "scan_gated_detection",
         )
     }
+    tm = engine.track_manager
+    environment["tracker"] = (tm.kf.process_noise, tm.confirm_hits, tm.max_misses)
     terrain = engine.terrain.config if engine.terrain is not None else None
     return radar, targets, environment, terrain
 
@@ -133,6 +135,9 @@ def test_close_air_combat_sector_scan_loses_bandit_leaving_the_sector():
     assert bandit_2[-1].time < 60.0
     for result in bandit_1 + bandit_2:
         assert abs(np.degrees(result.true_azimuth_rad)) <= 60.5
+    # The tuned tracker follows the break turn with a single, unbroken track.
+    lost = [e for e in engine.event_log if e.kind.value == "track_lost"]
+    assert not lost
 
 
 def test_mountain_ambush_target_emerges_from_terrain_mask():

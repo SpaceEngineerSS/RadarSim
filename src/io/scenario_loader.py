@@ -159,6 +159,7 @@ class TargetConfig:
     swerling_model: int
     position: np.ndarray
     velocity: np.ndarray
+    affiliation: str = "unknown"
     acceleration: np.ndarray = field(default_factory=lambda: np.zeros(3))
     turn_rate_deg_s: float = 0.0
     deploy_time_s: float = 0.0
@@ -276,6 +277,9 @@ class ScenarioConfig:
     mti_threshold_mps: float = 15.0
     monopulse_enabled: bool = False
     frequency_agility_enabled: bool = False
+    tracker_process_noise_mps2: float = 10.0
+    tracker_confirm_hits: int = 3
+    tracker_max_misses: int = 3
     required_radar_preset: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -310,6 +314,15 @@ class ScenarioLoader:
 
         if filepath:
             self.load(filepath)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ScenarioLoader":
+        """Build a loader from an in-memory scenario mapping."""
+        loader = cls()
+        loader.data = data
+        loader.warnings = validate(data)
+        loader._config = loader._parse_config()
+        return loader
 
     def load(self, filepath: str) -> bool:
         """
@@ -349,6 +362,7 @@ class ScenarioLoader:
         sim = self._section("simulation")
         cfar = sim.get("cfar") or {}
         mti = sim.get("mti") or {}
+        tracker = sim.get("tracker") or {}
         primaries = self._parse_targets()
         targets = primaries + self._parse_expendables(primaries)
 
@@ -379,6 +393,9 @@ class ScenarioLoader:
             frequency_agility_enabled=bool(
                 (sim.get("eccm") or {}).get("frequency_agility", False)
             ),
+            tracker_process_noise_mps2=float(tracker.get("process_noise_mps2", 10.0)),
+            tracker_confirm_hits=int(tracker.get("confirm_hits", 3)),
+            tracker_max_misses=int(tracker.get("max_misses", 3)),
             required_radar_preset=scenario.get("required_radar_preset"),
         )
 
@@ -457,6 +474,7 @@ class ScenarioLoader:
                 TargetConfig(
                     name=name,
                     target_type=t.get("type", "aircraft"),
+                    affiliation=str(t.get("affiliation", "unknown")).lower(),
                     rcs_m2=float(t.get("rcs_m2", 1.0)),
                     swerling_model=int(t.get("swerling_model", 1)),
                     position=_position(t.get("initial_position")),
@@ -731,6 +749,7 @@ class ScenarioLoader:
                     acceleration=tc.acceleration,
                     rcs_m2=tc.rcs_m2,
                     target_type=tc.target_type,
+                    affiliation=tc.affiliation,
                     swerling_model=SwerlingModel(tc.swerling_model),
                     motion_model=motion,
                     turn_rate_rad_s=np.radians(tc.turn_rate_deg_s),
@@ -802,6 +821,10 @@ class ScenarioLoader:
         engine.mti_threshold_mps = cfg.mti_threshold_mps
         engine.monopulse_enabled = cfg.monopulse_enabled
         engine.frequency_agility_enabled = cfg.frequency_agility_enabled
+        if engine.track_manager is not None:
+            engine.track_manager.kf.process_noise = cfg.tracker_process_noise_mps2
+            engine.track_manager.confirm_hits = cfg.tracker_confirm_hits
+            engine.track_manager.max_misses = cfg.tracker_max_misses
         if any(t.has_ecm for t in cfg.targets):
             # Scenario jammers radiate from the start, each with its own technique.
             engine.set_ecm_mode(True)

@@ -10,7 +10,7 @@
     "frequency_hz": 10000000000.0,
     "power_watts": 2000,
     "prf_hz": 2000,
-    "pulse_width_s": 0.000002,
+    "pulse_width_s": 2e-06,
     "system_losses_db": 5.0,
     "antenna": {
       "gain_db": 35,
@@ -24,7 +24,11 @@
       "system_temperature_k": 290,
       "full_scale_dbm": -25
     },
-    "position": {"x_m": 0, "y_m": 0, "z_m": 25}
+    "position": {
+      "x_m": 0,
+      "y_m": 0,
+      "z_m": 25
+    }
   },
   "environment": {
     "temperature_c": 15,
@@ -38,20 +42,37 @@
     {
       "name": "Noise jammer target",
       "type": "bomber",
-      "initial_position": {"x_m": 45000, "y_m": 0, "z_m": 10000},
-      "velocity": {"vx_mps": -180, "vy_mps": 0, "vz_mps": -5},
+      "initial_position": {
+        "x_m": 45000,
+        "y_m": 0,
+        "z_m": 10000
+      },
+      "velocity": {
+        "vx_mps": -180,
+        "vy_mps": 0,
+        "vz_mps": -5
+      },
       "rcs_m2": 25.0,
       "swerling_model": 1,
       "has_ecm": true,
       "ecm_type": "noise_barrage",
       "ecm_power_watts": 500,
-      "ecm_bandwidth_hz": 100000000
+      "ecm_bandwidth_hz": 100000000,
+      "affiliation": "hostile"
     },
     {
       "name": "DRFM target",
       "type": "fighter",
-      "initial_position": {"x_m": 40000, "y_m": 15000, "z_m": 7000},
-      "velocity": {"vx_mps": -220, "vy_mps": -80, "vz_mps": 0},
+      "initial_position": {
+        "x_m": 40000,
+        "y_m": 15000,
+        "z_m": 7000
+      },
+      "velocity": {
+        "vx_mps": -220,
+        "vy_mps": -80,
+        "vz_mps": 0
+      },
       "rcs_m2": 3.0,
       "swerling_model": 3,
       "has_ecm": true,
@@ -65,14 +86,15 @@
         "max_pull_m": 2500,
         "vgpo_rate_hz_per_s": 80,
         "max_doppler_pull_hz": 600,
-        "inherent_delay_s": 0.0000002
-      }
+        "inherent_delay_s": 2e-07
+      },
+      "affiliation": "hostile"
     }
   ],
   "simulation": {
     "enable_atmospheric_loss": true,
     "enable_clutter": true,
-    "pfa": 0.000001,
+    "pfa": 1e-06,
     "pulses_integrated": 8
   }
 }

@@ -34,6 +34,7 @@ radar:
 
 targets:
   - name: "Low Flyer 1"
+    affiliation: "unknown"
     type: "aircraft"
     rcs_m2: 8.0
     swerling_model: 1
@@ -41,6 +42,7 @@ targets:
     velocity: {vx_mps: -80, vy_mps: -40, vz_mps: 0}
 
   - name: "Low Flyer 2"
+    affiliation: "unknown"
     type: "helicopter"
     rcs_m2: 4.0
     swerling_model: 2  # rotor modulation decorrelates pulse to pulse
@@ -48,6 +50,7 @@ targets:
     velocity: {vx_mps: 60, vy_mps: -30, vz_mps: 2}
 
   - name: "High Flyer"
+    affiliation: "friend"
     type: "aircraft"
     rcs_m2: 10.0
     swerling_model: 1

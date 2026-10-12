@@ -38,6 +38,9 @@ from src.physics.rcs import (
 )
 
 
+AFFILIATIONS = ("friend", "hostile", "neutral", "unknown")
+
+
 class ScanType(Enum):
     """Antenna scan patterns."""
 
@@ -242,6 +245,7 @@ class Target:
         active_from_s: float = 0.0,
         rcs_bloom_time_s: float = 0.0,
         rcs_decay_time_s: float = 0.0,
+        affiliation: str = "unknown",
     ):
         """
         Initialize target.
@@ -264,6 +268,7 @@ class Target:
             active_from_s: Simulation time the object appears (deployment) [s]
             rcs_bloom_time_s: RCS rise time constant after deployment (chaff) [s]
             rcs_decay_time_s: RCS decay time constant after deployment (chaff) [s]
+            affiliation: "friend", "hostile", "neutral" or "unknown" (display only)
         """
         self.target_id = target_id
         self.target_type = target_type
@@ -275,6 +280,9 @@ class Target:
         self.rcs_bloom_time_s = float(rcs_bloom_time_s)
         self.rcs_decay_time_s = float(rcs_decay_time_s)
         self.age_s = 0.0  # Time since deployment
+        if affiliation not in AFFILIATIONS:
+            raise ValueError(f"affiliation must be one of {AFFILIATIONS}")
+        self.affiliation = affiliation
         self.rcs_mean = rcs_m2
         self.swerling_model = swerling_model
         self.motion_model = motion_model
@@ -442,6 +450,7 @@ class Target:
         return {
             "target_id": self.target_id,
             "name": self.name,
+            "affiliation": self.affiliation,
             "target_type": self.target_type,
             "position": self.state.position.tolist(),
             "velocity": self.state.velocity.tolist(),

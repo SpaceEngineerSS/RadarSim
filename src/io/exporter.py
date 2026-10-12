@@ -148,6 +148,7 @@ def _target(target, state) -> Dict[str, Any]:
     data: Dict[str, Any] = {
         "name": target.name,
         "type": target.target_type,
+        "affiliation": target.affiliation,
         "rcs_m2": float(target.rcs_mean),
         "swerling_model": target.swerling_model.value,
         "initial_position": _xyz(state.position),
@@ -247,6 +248,12 @@ def _simulation(engine) -> Dict[str, Any]:
         "monopulse": {"enabled": bool(engine.monopulse_enabled)},
         "eccm": {"frequency_agility": bool(engine.frequency_agility_enabled)},
     }
+    if engine.track_manager is not None:
+        sim["tracker"] = {
+            "process_noise_mps2": float(engine.track_manager.kf.process_noise),
+            "confirm_hits": int(engine.track_manager.confirm_hits),
+            "max_misses": int(engine.track_manager.max_misses),
+        }
     if engine.seed is not None:
         sim["seed"] = int(engine.seed)
     if engine.cfar is not None:

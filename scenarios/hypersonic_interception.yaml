@@ -42,6 +42,7 @@ radar:
 # Hypersonic Glide Vehicle target
 targets:
   - name: "HGV_Avangard"
+    affiliation: "hostile"
     type: "missile"
     rcs_m2: 0.5         # Moderate RCS (glide body)
     swerling_model: 3   # Slow fluctuation, chi-squared

@@ -40,6 +40,7 @@ radar:
 
 targets:
   - name: "Bandit 1"
+    affiliation: "hostile"
     type: "fighter"
     rcs_m2: 0.5
     swerling_model: 1
@@ -51,6 +52,7 @@ targets:
     ecm_power_watts: 200
 
   - name: "Bandit 2"
+    affiliation: "hostile"
     type: "fighter"
     rcs_m2: 0.5
     swerling_model: 1
@@ -69,3 +71,5 @@ simulation:
   enable_atmospheric_loss: true
   enable_clutter: false
   pfa: 1.0e-6
+  tracker:
+    process_noise_mps2: 40  # follows the 4.7 g break turn without losing the track

@@ -40,6 +40,7 @@ radar:
 # Stealth bomber target
 targets:
   - name: "B-21_Raider"
+    affiliation: "hostile"
     type: "bomber"
     rcs_m2: 0.01        # Very low RCS (treat as the value at the radar frequency)
     swerling_model: 1   # Slow fluctuation (large aircraft)

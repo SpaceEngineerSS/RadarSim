@@ -137,31 +137,31 @@ class LinearKalmanFilter:
 
     def _get_process_noise(self, dt: float) -> np.ndarray:
         """
-        Get process noise covariance Q for time step dt.
+        Continuous white-noise acceleration (CWNA) process noise.
 
-        Uses discrete white noise acceleration model:
-        Q = G * G^T * q^2
+        Q = q * | dt^3/3   0        dt^2/2   0      |
+                | 0        dt^3/3   0        dt^2/2 |
+                | dt^2/2   0        dt       0      |
+                | 0        dt^2/2   0        dt     |
 
-        where G = [dt^2/2, dt^2/2, dt, dt]^T
-        and q = process noise intensity
+        with power spectral density q = sigma_a^2 * 1 s. Unlike the discrete
+        model, the covariance added over an interval does not depend on how
+        many steps it is split into, so tracking quality is independent of
+        the simulation step size.
+
+        Reference: Bar-Shalom, Li & Kirubarajan (2001), Eq. 6.2.2-12
         """
-        q = self.process_noise
-        dt2 = dt * dt
-        dt3 = dt2 * dt
-        dt4 = dt3 * dt
-
-        # Discrete white noise acceleration model
-        Q = np.array(
+        q = self.process_noise**2  # [m^2/s^3] for a 1 s correlation
+        dt2, dt3 = dt * dt, dt * dt * dt
+        return np.array(
             [
-                [dt4 / 4, 0, dt3 / 2, 0],
-                [0, dt4 / 4, 0, dt3 / 2],
-                [dt3 / 2, 0, dt2, 0],
-                [0, dt3 / 2, 0, dt2],
+                [dt3 / 3, 0, dt2 / 2, 0],
+                [0, dt3 / 3, 0, dt2 / 2],
+                [dt2 / 2, 0, dt, 0],
+                [0, dt2 / 2, 0, dt],
             ],
             dtype=np.float64,
-        ) * (q**2)
-
-        return Q
+        ) * q
 
     def predict(self, state: KalmanState, dt: float) -> KalmanState:
         """

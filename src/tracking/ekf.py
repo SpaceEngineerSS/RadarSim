@@ -603,29 +603,31 @@ class ExtendedKalmanFilter:
 
     def _process_noise_matrix(self, dt: float) -> np.ndarray:
         """
-        Discrete White Noise Acceleration process noise Q.
+        Continuous white-noise acceleration (CWNA) process noise.
 
-        Q = σ_a² · | dt⁴/4   0      dt³/2   0     |
-                    | 0       dt⁴/4  0       dt³/2 |
-                    | dt³/2   0      dt²     0     |
-                    | 0       dt³/2  0       dt²   |
+        Q = q * | dt^3/3   0        dt^2/2   0      |
+                | 0        dt^3/3   0        dt^2/2 |
+                | dt^2/2   0        dt       0      |
+                | 0        dt^2/2   0        dt     |
 
-        Reference: Bar-Shalom (2001), Eq. 6.2.3
+        with power spectral density q = sigma_a^2 * 1 s. Unlike the discrete
+        model, the covariance added over an interval does not depend on how
+        many steps it is split into, so tracking quality is independent of
+        the simulation step size.
+
+        Reference: Bar-Shalom, Li & Kirubarajan (2001), Eq. 6.2.2-12
         """
-        q = self.process_noise
-        dt2 = dt * dt
-        dt3 = dt2 * dt
-        dt4 = dt3 * dt
-
+        q = self.process_noise**2
+        dt2, dt3 = dt * dt, dt * dt * dt
         return np.array(
             [
-                [dt4 / 4, 0, dt3 / 2, 0],
-                [0, dt4 / 4, 0, dt3 / 2],
-                [dt3 / 2, 0, dt2, 0],
-                [0, dt3 / 2, 0, dt2],
+                [dt3 / 3, 0, dt2 / 2, 0],
+                [0, dt3 / 3, 0, dt2 / 2],
+                [dt2 / 2, 0, dt, 0],
+                [0, dt2 / 2, 0, dt],
             ],
             dtype=np.float64,
-        ) * (q**2)
+        ) * q
 
     # ═══════════════════════════════════════════════════════════════
     # UNCERTAINTY ELLIPSE (for UI visualization)

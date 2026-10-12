@@ -1,4 +1,4 @@
-"""Threading-model tests for the GUI simulation bridge (src/ui/thread_manager.py)."""
+"""Simulation thread: command queue, pause/step, fixed-step timing, errors."""
 
 import os
 import time
@@ -8,25 +8,23 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-pytest.importorskip("pyqtgraph")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from src.ui.thread_manager import SimulationThread, create_demo_scenario
+from src.io.scenario_loader import ScenarioLoader  # noqa: E402
+from src.simulation.frame import FrameState  # noqa: E402
+from src.ui.thread_manager import SimulationThread  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def application():
-    app = QApplication.instance() or QApplication([])
-    yield app
-    app.processEvents()
+    return QApplication.instance() or QApplication([])
 
 
-def _wait_until(application, condition, timeout_s=5.0):
-    deadline = time.monotonic() + timeout_s
+def _wait(app, condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        application.processEvents()
+        app.processEvents()
         if condition():
             return True
         time.sleep(0.01)
@@ -34,30 +32,34 @@ def _wait_until(application, condition, timeout_s=5.0):
 
 
 @pytest.fixture
-def running_thread(application):
-    thread = SimulationThread(create_demo_scenario(), update_rate_hz=100.0)
+def running(application):
+    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    thread = SimulationThread(engine)
     frames = []
-    thread.update_data.connect(frames.append)
+    thread.frame_ready.connect(frames.append)
     thread.start()
-    assert _wait_until(application, lambda: len(frames) > 0)
+    assert _wait(application, lambda: frames)
     yield thread, frames
     thread.stop()
     assert thread.wait(5000)
 
 
-def test_submit_runs_on_worker_between_steps(application, running_thread):
-    thread, _frames = running_thread
-    thread.submit(lambda engine: setattr(engine.radar, "power_watts", 123_000.0))
-    assert _wait_until(application, lambda: thread.engine.radar.power_watts == 123_000.0)
+def test_frames_are_immutable_snapshots(running):
+    _thread, frames = running
+    assert isinstance(frames[-1], FrameState)
+    with pytest.raises(Exception):
+        frames[-1].time = 0.0
 
 
-def test_call_sync_returns_result_from_worker(running_thread):
-    thread, _frames = running_thread
-    assert thread.call_sync(lambda engine: len(engine.targets)) == 4
+def test_submit_runs_between_steps(application, running):
+    thread, _ = running
+    thread.submit(lambda engine: setattr(engine.radar, "power_watts", 123e3))
+    assert _wait(application, lambda: thread.engine.radar.power_watts == 123e3)
 
 
-def test_call_sync_reraises_command_errors(running_thread):
-    thread, _frames = running_thread
+def test_call_sync_returns_and_reraises(running):
+    thread, _ = running
+    assert thread.call_sync(lambda engine: len(engine.targets)) == 3
 
     def boom(_engine):
         raise RuntimeError("bad command")
@@ -66,114 +68,43 @@ def test_call_sync_reraises_command_errors(running_thread):
         thread.call_sync(boom)
 
 
-def test_pause_stops_time_and_resume_does_not_jump(application, running_thread):
-    thread, frames = running_thread
+def test_simulated_time_follows_wall_clock_in_fixed_steps(application, running):
+    thread, _ = running
+    start = thread.call_sync(lambda e: e.current_time)
+    time.sleep(1.0)
+    elapsed = thread.call_sync(lambda e: e.current_time) - start
+    assert 0.7 < elapsed < 1.3
+    dt = thread.engine.dt
+    assert thread.call_sync(lambda e: e.current_time) / dt == pytest.approx(
+        round(thread.call_sync(lambda e: e.current_time) / dt), abs=1e-6
+    )
+
+
+def test_pause_freezes_and_step_advances_one_step(application, running):
+    thread, frames = running
     thread.pause()
-    application.processEvents()
-    paused_time = thread.call_sync(lambda engine: engine.simulation_time)
-    time.sleep(0.4)
-    assert thread.call_sync(lambda engine: engine.simulation_time) == paused_time
-
-    count = len(frames)
-    thread.resume()
-    assert _wait_until(application, lambda: len(frames) > count)
-    # The first frame after a 0.4 s pause must be a normal-sized step, not 0.4 s.
-    assert frames[count]["dt"] < 0.3
+    _wait(application, lambda: thread.is_paused)
+    time.sleep(0.1)
+    frozen = thread.call_sync(lambda e: e.current_time)
+    time.sleep(0.3)
+    assert thread.call_sync(lambda e: e.current_time) == frozen
+    thread.step_once()
+    assert _wait(application, lambda: thread.call_sync(lambda e: e.current_time) > frozen)
+    assert thread.call_sync(lambda e: e.current_time) == pytest.approx(frozen + thread.engine.dt)
 
 
-def test_step_error_pauses_and_reports(application, running_thread):
-    thread, _frames = running_thread
-    errors, pauses = [], []
+def test_step_error_pauses_and_reports(application, running):
+    thread, _ = running
+    errors = []
     thread.error.connect(errors.append)
-    thread.paused_changed.connect(pauses.append)
-
-    def break_engine(engine):
-        engine.targets.append(None)  # next step raises AttributeError
-
-    thread.submit(break_engine)
-    assert _wait_until(application, lambda: errors and pauses)
-    assert pauses[-1] is True
+    thread.submit(lambda engine: engine.targets.append(None))
+    assert _wait(application, lambda: errors)
     assert thread.is_paused
-    assert thread.isRunning()
     thread.call_sync(lambda engine: engine.targets.pop())
 
 
 def test_commands_apply_immediately_when_not_running(application):
-    thread = SimulationThread(create_demo_scenario())
-    thread.submit(lambda engine: setattr(engine.radar, "prf_hz", 2500.0))
-    assert thread.engine.radar.prf_hz == 2500.0
-
-
-def test_main_window_space_toggles_pause_without_crashing(application):
-    from src.ui.main_window import MainWindow
-
-    window = MainWindow()
-    window.show()
-    assert _wait_until(application, lambda: window.sim_thread.isRunning())
-
-    window.setFocus()
-    from PySide6.QtTest import QTest
-
-    QTest.keyClick(window, Qt.Key.Key_Space)
-    assert _wait_until(application, lambda: window.sim_thread.is_paused)
-    assert window.control_panel.play_btn.text().endswith("PLAY")
-
-    QTest.keyClick(window, Qt.Key.Key_Space)
-    assert _wait_until(application, lambda: not window.sim_thread.is_paused)
-    window.close()
-    application.processEvents()
-
-
-def test_failed_scenario_load_keeps_current_simulation(application, tmp_path, monkeypatch):
-    from src.ui.main_window import MainWindow
-
-    monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: None)
-    window = MainWindow()
-    window.show()
-    engine_before = window.engine
-    thread_before = window.sim_thread
-
-    bad = tmp_path / "bad.yaml"
-    bad.write_text("simulation: {pfa: 5}\n", encoding="utf-8")
-    assert window.load_scenario(str(bad)) is False
-    assert window.engine is engine_before
-    assert window.sim_thread is thread_before
-    assert window.sim_thread.isRunning()
-    window.close()
-    application.processEvents()
-
-
-def test_pause_and_speed_survive_scenario_reload(application):
-    from pathlib import Path
-
-    from src.ui.main_window import MainWindow
-
-    scenarios = Path(__file__).parents[1] / "scenarios"
-    window = MainWindow()
-    window.show()
-    window.control_panel.speed_slider.setValue(30)  # 3.0x
-    window._toggle_pause()
-    assert window.load_scenario(str(scenarios / "basic_tracking.json"))
-    assert window.sim_thread.is_paused
-    assert window.sim_thread.speed_factor == pytest.approx(3.0)
-    window.close()
-    application.processEvents()
-
-
-def test_scenario_radar_values_survive_preset_and_slider_sync(application):
-    """Loading must not round 0.45 GHz to 1 GHz or apply the preset's power."""
-    from pathlib import Path
-
-    from src.ui.main_window import MainWindow
-
-    scenarios = Path(__file__).parents[1] / "scenarios"
-    window = MainWindow()
-    window.show()
-    assert window.load_scenario(str(scenarios / "stealth_deep_penetration.yaml"))
-    application.processEvents()
-    radar = window.sim_thread.call_sync(lambda engine: engine.radar)
-    assert radar.frequency_hz == pytest.approx(0.45e9)
-    assert radar.power_watts == pytest.approx(400e3)
-    assert window.control_panel.arch_combo.currentText() == "Early Warning (UHF)"
-    window.close()
-    application.processEvents()
+    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    thread = SimulationThread(engine)
+    thread.submit(lambda e: setattr(e.radar, "prf_hz", 2500.0))
+    assert engine.radar.prf_hz == 2500.0

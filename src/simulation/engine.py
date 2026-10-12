@@ -12,6 +12,7 @@ Features:
 Reference: Skolnik, "Radar Handbook", 3rd Ed., Chapter 2
 """
 
+import collections
 import copy
 import dataclasses
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from src.physics.rain import ITU_R_P838
 from src.physics.rcs import SwerlingModel
 from src.tracking.monopulse import MonopulseEstimator
 
+from .events import JAMMED_LOSS_DB, EventKind, SimEvent
 from .objects import MotionModel, Radar, SimulationState, Target
 
 # Terrain masking (optional)
@@ -233,6 +235,9 @@ class SimulationLog:
         """Get detection history for a specific target."""
         return [r for r in self.detection_history if r.target_id == target_id]
 
+
+# Number of events kept in SimulationEngine.event_log.
+EVENT_LOG_LENGTH = 5000
 
 # ECM mode in which every jammer uses its own technique.
 ECM_PER_TARGET = "per_target"
@@ -464,12 +469,22 @@ class SimulationEngine:
         self._last_looks: Dict[int, DetectionResult] = {}
 
         self.tracks: list = []
+        # Events raised during the last step, and a bounded history of all events
+        self.events: List[SimEvent] = []
+        self.event_log: "collections.deque[SimEvent]" = collections.deque(
+            maxlen=EVENT_LOG_LENGTH
+        )
+        self._detected_once: set = set()
+        self._detected_last_look: set = set()
+        self._masked_targets: set = set()
+        self._jammed_targets: set = set()
+        self._track_status: Dict[int, str] = {}
         if TRACKING_AVAILABLE:
             self.track_manager = TrackManager(
                 gate_distance=TRACK_GATE_DISTANCE_M,
                 max_misses=3,  # Missed scans before a confirmed track is dropped
                 confirm_hits=3,  # Consecutive scan hits to confirm
-                process_noise=5.0,  # Maneuver responsiveness [m/s^2]
+                process_noise=10.0,  # CWNA acceleration noise [m/s^2]
                 measurement_noise=max(range_noise_std_m, 1.0),
             )
             self.enable_tracking = True
@@ -913,6 +928,65 @@ class SimulationEngine:
             return 0.0
         return range_m * (self.rain_height_m - low) / (high - low)
 
+    def _emit(self, kind: EventKind, message: str, **ids) -> None:
+        event = SimEvent(time=self.current_time, kind=kind, message=message, **ids)
+        self.events.append(event)
+        self.event_log.append(event)
+
+    def _look_events(self, target: Target, result: DetectionResult) -> None:
+        tid = target.target_id
+        if result.is_detected and tid not in self._detected_once:
+            self._detected_once.add(tid)
+            self._emit(
+                EventKind.FIRST_DETECTION,
+                f"{target.name} first detected at {result.true_range_m / 1000:.1f} km",
+                target_id=tid,
+            )
+        was_masked = tid in self._masked_targets
+        if result.terrain_masked:
+            self._masked_targets.add(tid)
+        else:
+            self._masked_targets.discard(tid)
+        if result.terrain_masked != was_masked:
+            kind = EventKind.MASKED if result.terrain_masked else EventKind.UNMASKED
+            verb = "hidden by terrain" if result.terrain_masked else "clear of terrain"
+            self._emit(kind, f"{target.name} {verb}", target_id=tid)
+        jammed = result.jammer_loss_db > JAMMED_LOSS_DB
+        was_jammed = tid in self._jammed_targets
+        if jammed:
+            self._jammed_targets.add(tid)
+        else:
+            self._jammed_targets.discard(tid)
+        if jammed and not was_jammed:
+            self._emit(
+                EventKind.JAMMED,
+                f"{target.name} jamming costs {result.jammer_loss_db:.0f} dB",
+                target_id=tid,
+            )
+        if jammed and result.is_detected and tid not in self._detected_last_look:
+            self._emit(
+                EventKind.BURN_THROUGH,
+                f"Burn-through on {target.name} at {result.true_range_m / 1000:.1f} km",
+                target_id=tid,
+            )
+        if result.is_detected:
+            self._detected_last_look.add(tid)
+        else:
+            self._detected_last_look.discard(tid)
+
+    def _track_events(self) -> None:
+        current = {track.id: track.status.value for track in self.tracks}
+        for track_id, status in current.items():
+            before = self._track_status.get(track_id)
+            if before is None:
+                self._emit(EventKind.TRACK_INITIATED, f"Track {track_id} initiated", track_id=track_id)
+            if status == "confirmed" and before not in ("confirmed", "coasting"):
+                self._emit(EventKind.TRACK_CONFIRMED, f"Track {track_id} confirmed", track_id=track_id)
+        for track_id, before in self._track_status.items():
+            if track_id not in current and before in ("confirmed", "coasting"):
+                self._emit(EventKind.TRACK_LOST, f"Track {track_id} lost", track_id=track_id)
+        self._track_status = current
+
     def _monopulse_estimator(self) -> MonopulseEstimator:
         beamwidth_deg = float(np.degrees(self.radar.beamwidth_rad))
         if (
@@ -997,8 +1071,13 @@ class SimulationEngine:
         results = []
 
         # 1. Update all object kinematics
+        previous_time = self.current_time
+        self.events = []
         self.state.update_all(dt)
         self.current_time = self.state.time
+        for target in self.targets:
+            if 0.0 < target.active_from_s and previous_time < target.active_from_s <= self.current_time:
+                self._emit(EventKind.DEPLOYED, f"{target.name} deployed", target_id=target.target_id)
 
         if self.ecm_active:
             for jammer in self._drfm_jammers.values():
@@ -1380,6 +1459,8 @@ class SimulationEngine:
                 receiver_overloaded=receiver_overloaded,
             )
 
+            if illuminated:
+                self._look_events(target, result)
             results.append(result)
             self._last_looks[target.target_id] = result
             if illuminated:
@@ -1436,6 +1517,7 @@ class SimulationEngine:
                 revisit_guard_s=revisit_guard_s,
                 max_coast_time_s=max(3.5 * revisit_s, MIN_TRACK_COAST_TIME_S),
             )
+            self._track_events()
 
         # 6. Pulse-Doppler processing
         self._run_pulse_doppler()
@@ -1489,6 +1571,13 @@ class SimulationEngine:
         self._rd_map = None
         self.tracks = []
         self._last_looks = {}
+        self.events = []
+        self.event_log.clear()
+        self._detected_once = set()
+        self._detected_last_look = set()
+        self._masked_targets = set()
+        self._jammed_targets = set()
+        self._track_status = {}
         if self.track_manager is not None:
             self.track_manager.clear()
 

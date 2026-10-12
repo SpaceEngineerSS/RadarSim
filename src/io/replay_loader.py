@@ -58,6 +58,7 @@ class TargetState:
     has_jammer: bool = False
     snr_db: float = 0.0
     is_detected: bool = False
+    affiliation: str = "unknown"
 
 
 @dataclass
@@ -161,6 +162,7 @@ class ReplayLoader:
         ] = {}  # id -> {positions, velocities, metadata}
         self._measurements: Optional[Dict[str, np.ndarray]] = None
         self._radar_position = np.zeros(3)  # ENU; recordings may override it
+        self._scan_rate_rpm = 6.0
         self.metadata: Optional[ReplayMetadata] = None
 
         self._open_file()
@@ -193,6 +195,7 @@ class ReplayLoader:
                 "radar_power_watts", config.attrs.get("power_watts", 100e3)
             )
             max_range_km = config.attrs.get("max_range_km", 150.0)
+            self._scan_rate_rpm = float(config.attrs.get("scan_rate_rpm", 6.0))
             radar_position = config.attrs.get("radar_position_m")
             if radar_position is not None:
                 self._radar_position = np.asarray(
@@ -417,7 +420,8 @@ class ReplayLoader:
             targets.append(
                 TargetState(
                     target_id=target_id,
-                    name=f"Target {target_id}",
+                    name=metadata.get("name", f"Target {target_id}"),
+                    affiliation=metadata.get("affiliation", "unknown"),
                     target_type=metadata.get("type", "unknown"),
                     position=position,
                     velocity=velocity,
@@ -431,9 +435,8 @@ class ReplayLoader:
                 )
             )
 
-        # Calculate beam azimuth from time (assuming 6 RPM = 36 deg/s)
-        beam_scan_rate = 36.0  # deg/s
-        beam_azimuth_rad = np.radians((t * beam_scan_rate) % 360)
+        # Circular scan reconstructed from the recorded rotation rate
+        beam_azimuth_rad = np.radians((t * self._scan_rate_rpm * 6.0) % 360)
 
         return SimulationState(
             time=t,

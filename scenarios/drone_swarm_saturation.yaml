@@ -38,60 +38,70 @@ radar:
 targets:
   # Row 1 (Front) - 10 drones
   - name: "Drone_R1_01"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: -450, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_02"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: -350, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_03"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: -250, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_04"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: -150, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_05"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: -50, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_06"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: 50, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_07"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: 150, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_08"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: 250, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_09"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15000, y_m: 350, z_m: 100}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R1_10"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
@@ -100,60 +110,70 @@ targets:
 
   # Row 2 (Middle) - 10 drones, slightly higher
   - name: "Drone_R2_01"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: -450, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_02"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: -350, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_03"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: -250, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_04"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: -150, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_05"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: -50, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_06"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: 50, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_07"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: 150, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_08"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: 250, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_09"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15200, y_m: 350, z_m: 150}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R2_10"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
@@ -162,60 +182,70 @@ targets:
 
   # Row 3 (Rear) - 10 drones, even higher
   - name: "Drone_R3_01"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: -450, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_02"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: -350, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_03"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: -250, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_04"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: -150, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_05"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: -50, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_06"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: 50, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_07"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: 150, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_08"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: 250, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_09"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2
     initial_position: {x_m: -15400, y_m: 350, z_m: 200}
     velocity: {vx_mps: 15, vy_mps: 0, vz_mps: 0}
   - name: "Drone_R3_10"
+    affiliation: "hostile"
     type: "drone"
     rcs_m2: 0.01
     swerling_model: 2

@@ -58,7 +58,8 @@
       },
       "rcs_m2": 15.0,
       "swerling_model": 1,
-      "has_ecm": false
+      "has_ecm": false,
+      "affiliation": "hostile"
     },
     {
       "name": "Target 2",
@@ -75,7 +76,8 @@
       },
       "rcs_m2": 5.0,
       "swerling_model": 3,
-      "has_ecm": false
+      "has_ecm": false,
+      "affiliation": "unknown"
     },
     {
       "name": "Target 3",
@@ -92,7 +94,8 @@
       },
       "rcs_m2": 0.5,
       "swerling_model": 2,
-      "has_ecm": false
+      "has_ecm": false,
+      "affiliation": "hostile"
     }
   ],
   "simulation": {

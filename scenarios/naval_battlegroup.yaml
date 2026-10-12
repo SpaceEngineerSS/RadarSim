@@ -42,6 +42,7 @@ radar:
 targets:
   # Nimitz-class Aircraft Carrier
   - name: "CVN_Nimitz"
+    affiliation: "friend"
     type: "ship"
     rcs_m2: 50000       # Massive RCS (flight deck, island, aircraft)
     swerling_model: 0   # Non-fluctuating (huge stable target)
@@ -59,6 +60,7 @@ targets:
   # Challenge: Detect 0.1 m² targets against 50,000 m² carrier return
   
   - name: "ASM_1_Brahmos"
+    affiliation: "hostile"
     type: "missile"
     rcs_m2: 0.1         # Very small, designed for stealth approach
     swerling_model: 4   # Fast fluctuation (spinning parts)
@@ -73,6 +75,7 @@ targets:
     has_ecm: false
 
   - name: "ASM_2_Brahmos"
+    affiliation: "hostile"
     type: "missile"
     rcs_m2: 0.1
     swerling_model: 4
@@ -87,6 +90,7 @@ targets:
     has_ecm: false
 
   - name: "ASM_3_Harpoon"
+    affiliation: "hostile"
     type: "missile"
     rcs_m2: 0.15        # Slightly larger
     swerling_model: 4
@@ -103,6 +107,7 @@ targets:
     ecm_power_watts: 100
 
   - name: "ASM_4_Harpoon"
+    affiliation: "hostile"
     type: "missile"
     rcs_m2: 0.15
     swerling_model: 4

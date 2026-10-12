@@ -64,6 +64,7 @@ SCHEMA: Dict[str, Any] = {
         {
             "name": None,
             "type": None,
+            "affiliation": None,
             "rcs_m2": None,
             "swerling_model": None,
             "initial_position": _POSITION,
@@ -166,6 +167,7 @@ SCHEMA: Dict[str, Any] = {
         "cfar": {"type": None, "guard_cells": None, "reference_cells": None},
         "mti": {"enabled": None, "threshold_mps": None},
         "monopulse": {"enabled": None},
+        "tracker": {"process_noise_mps2": None, "confirm_hits": None, "max_misses": None},
         "eccm": {"frequency_agility": None},
     },
 }

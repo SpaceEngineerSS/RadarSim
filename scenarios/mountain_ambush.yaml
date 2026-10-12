@@ -36,6 +36,7 @@ radar:
 
 targets:
   - name: "Low Flyer"
+    affiliation: "hostile"
     type: "fighter"
     rcs_m2: 5.0
     swerling_model: 1
@@ -43,6 +44,7 @@ targets:
     velocity: {vx_mps: -250, vy_mps: 45, vz_mps: 0}
 
   - name: "High Reference"
+    affiliation: "neutral"
     type: "fighter"
     rcs_m2: 8.0
     swerling_model: 1

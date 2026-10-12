@@ -1,1633 +1,680 @@
 """
-Main Window
+RadarSim main window.
 
-Application shell for RadarSim GUI.
+Layout: header strip (scenario, mode, simulated time, status), objects list on
+the left, scope tabs in the centre, inspector and settings on the right, an
+analysis/event drawer and the transport bar at the bottom.
 
-Components:
-    - PPI Scope (main radar display)
-    - B-Scope (AESA radar display)
-    - A-Scope (diagnostic view)
-    - Control panel (frequency, power, range)
-    - PlaybackPanel (replay mode)
-    - AnalysisPanel (post-flight analysis)
-    - Status bar
-
-Modes:
-    - LIVE: SimulationWorker runs physics loop
-    - REPLAY: ReplayLoader provides historical data
-
-Architecture: Model-View-Controller (MVC)
-- GUI only visualizes, never calculates physics
-- Components extracted to src/ui/panels/ for modularity
+Rendering is decoupled from the simulation: frames arrive from the worker at
+up to 30 Hz, the active view is redrawn by a display timer that extrapolates
+motion between frames and lowers its own rate when the machine is slow.
 """
 
 import logging
 import sys
-from enum import Enum
+import time
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Qt, Slot
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QByteArray, QLocale, QSettings, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QDockWidget,
+    QApplication,
+    QDialog,
     QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
     QMainWindow,
-    QMessageBox,
+    QPushButton,
+    QScrollArea,
     QSplitter,
-    QStatusBar,
+    QStackedWidget,
+    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-# I/O modules
-from src.io.replay_loader import ReplayLoader
-from src.io.scenario_loader import ScenarioLoader
-from src.simulation.recorder import FlightRecorder
+from src.simulation.frame import FrameState
 
-from .a_scope import AScope
-from .analysis_panel import AnalysisPanel
-from .analysis_window import AnalysisWindow
-from .b_scope import BScope
-
-# Extracted panel components
-from .panels import ControlPanel, TargetInspector
-from .playback_panel import PlaybackPanel
-
-# Local UI components
-from .ppi_scope import PPIScope
-from .range_doppler import RangeDopplerScope
-from .rhi_scope import RHIScope
-from .sar_viewer import SARViewer
-from .tactical_3d import TacticalMap3D
-from .thread_manager import SimulationThread, create_demo_scenario
+from . import motion
+from .controller import SimulationController
+from .i18n import LANGUAGES, language, tr
+from .panels.analysis import CoveragePanel, MonteCarloPanel
+from .panels.events import EventLog
+from .panels.inspector import Inspector
+from .panels.objects import ObjectsPanel
+from .panels.settings import SettingsPanel, engine_snapshot
+from .panels.transport import TransportBar
+from .theme import SPACE
+from .theme.icons import icon
+from .views.ascope import AScopeView
+from .views.bscope import BScopeView
+from .views.ppi import PPIView
+from .views.range_doppler import RangeDopplerView
+from .views.rhi import RHIView
+from .views.tactical3d import Tactical3DView
+from .widgets import ToastHost, caption
 
 logger = logging.getLogger(__name__)
 
-# Upper bound for waiting on the in-flight step when stopping the simulation.
-SIM_THREAD_STOP_TIMEOUT_MS = 5000
+APP_VERSION = "4.0.0"
+DOCS_URL = "https://spaceengineerss.github.io/RadarSim/"
+
+# Display refresh budgets [ms]; the loop steps down when frames take too long.
+FRAME_INTERVALS_MS = (16, 33, 50)
+PROFILES = ("auto", "quality", "light")
 
 
-class SimulationMode(Enum):
-    """Simulation operating modes."""
+def scenarios_dir() -> Path:
+    """Built-in scenarios: next to a frozen executable, else in the source tree."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates += [Path(getattr(sys, "_MEIPASS", "")) / "scenarios", Path(sys.executable).parent / "scenarios"]
+    candidates += [Path(__file__).resolve().parents[2] / "scenarios", Path.cwd() / "scenarios"]
+    return next((c for c in candidates if c.is_dir()), Path.cwd())
 
-    LIVE = "live"  # Real-time physics simulation
-    REPLAY = "replay"  # Playing back recorded session
+
+def data_dir() -> Path:
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    return Path(base or Path.home() / ".radarsim")
+
+
+class HeaderStrip(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Panel")
+        self.setProperty("rule", "bottom")
+        self.setFixedHeight(40)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(SPACE.lg, 0, SPACE.lg, 0)
+        layout.setSpacing(SPACE.m)
+        mark = QLabel("RadarSim")
+        mark.setProperty("role", "title")
+        layout.addWidget(mark)
+        divider = QFrame()
+        divider.setFixedSize(1, 16)
+        divider.setObjectName("Separator")
+        divider.setStyleSheet("max-height: 16px; min-width: 1px;")
+        layout.addWidget(divider)
+        self.scenario = caption("")
+        layout.addWidget(self.scenario)
+        self.mode = QLabel("LIVE")
+        self.mode.setProperty("role", "badge")
+        self.mode.setFixedHeight(20)
+        layout.addWidget(self.mode, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addStretch()
+        self.status = caption("", "faint")
+        layout.addWidget(self.status)
+        self.clock = QLabel("T+00:00:00")
+        self.clock.setProperty("role", "value")
+        layout.addWidget(self.clock)
+
+    def set_mode(self, mode: str) -> None:
+        self.mode.setText(tr(mode.upper()))
+        self.mode.setProperty("state", mode)
+        self.mode.style().unpolish(self.mode)
+        self.mode.style().polish(self.mode)
+
+    def set_time(self, seconds: float) -> None:
+        h, rem = divmod(int(seconds), 3600)
+        m, s = divmod(rem, 60)
+        text = f"T+{h:02d}:{m:02d}:{s:02d}"
+        if self.clock.text() != text:
+            self.clock.setText(text)
 
 
 class MainWindow(QMainWindow):
-    """
-    Main application window for RadarSim.
-
-    Features:
-        - PPI Scope (central display for mechanical radars)
-        - B-Scope (for AESA/electronic radars)
-        - A-Scope (bottom dock)
-        - Control panel (right dock)
-        - Target Inspector (left dock)
-        - Dark military theme
-    """
-
-    def __init__(self, scenario_path: Optional[str] = None) -> None:
+    def __init__(self, scenario_path: Optional[str] = None):
         super().__init__()
-
-        self.setWindowTitle("RadarSim - Professional Radar Simulation")
-        self.setMinimumSize(1200, 800)
-
-        # Apply dark theme
-        self._apply_dark_theme()
-
-        # Create simulation
-        self.engine = create_demo_scenario()
-        self.sim_thread: Optional[SimulationThread] = None
-        # Loop state survives thread restarts (scenario load, reset).
-        self._sim_paused = False
-        self._sim_speed = 1.0
-        self._current_scenario_path: Optional[str] = None
-
-        # Replay mode state
-        self.mode = SimulationMode.LIVE
-        self.replay_loader: Optional[ReplayLoader] = None
-
-        # Recording state
-        self.recorder = FlightRecorder(output_dir="output")
-        self.is_recording = False
-
-        # ═══ ADVANCED MODULE STATE ═══
-        self.lpi_enabled = False
-        self.lpi_technique = "FHSS"  # FHSS, DSSS, Costas
-        self.fusion_enabled = False
-        self.fusion_method = "covariance_intersection"
-
-        # SAR Viewer window
-        self.sar_viewer = None
-
-        # Analysis window (separate window for post-flight analysis)
-        self.analysis_window = AnalysisWindow(self)
-
-        # Setup UI
-        self._setup_ui()
-        self._setup_menu()
-        self._setup_status_bar()
-
-        # ═══ SETTINGS PERSISTENCE ═══
-        self._load_settings()
-
-        # Start simulation in LIVE mode
-        if scenario_path:
-            self.load_scenario(scenario_path)
-        else:
-            self._start_simulation()
-
-    def _apply_dark_theme(self) -> None:
-        """Apply dark military theme."""
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background-color: #0a1510;
-            }
-            QDockWidget {
-                color: #00dd66;
-                font-family: 'Consolas', monospace;
-            }
-            QDockWidget::title {
-                background-color: #002815;
-                padding: 5px;
-            }
-        """
-        )
-
-    def _setup_ui(self) -> None:
-        """Setup the main UI layout with tabbed displays."""
-        # Central widget with tabbed interface
-        central = QWidget()
-        self.setCentralWidget(central)
-
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-
-        # ═══ TABBED DISPLAY INTERFACE ═══
-        self.display_tabs = QTabWidget()
-        self.display_tabs.setStyleSheet(
-            """
-            QTabWidget::pane {
-                border: 1px solid #00aa55;
-                background-color: #0a1510;
-            }
-            QTabBar::tab {
-                background-color: #001a0d;
-                color: #00aa55;
-                padding: 8px 16px;
-                border: 1px solid #00aa55;
-                border-bottom: none;
-                font-family: 'Consolas', monospace;
-                font-weight: bold;
-            }
-            QTabBar::tab:selected {
-                background-color: #002815;
-                color: #00ff88;
-            }
-            QTabBar::tab:hover {
-                background-color: #003322;
-            }
-        """
-        )
-
-        # ═══ TAB 1: SCOPE VIEW (PPI/B-Scope + A-Scope) ═══
-        scope_tab = QWidget()
-        scope_layout = QVBoxLayout(scope_tab)
-        scope_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Splitter for primary scope and A-scope
-        self.scope_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # PPI Scope (main display for mechanical radars)
-        self.ppi_scope = PPIScope(max_range_km=150.0)
-        self.scope_splitter.addWidget(self.ppi_scope)
-
-        # B-Scope (for AESA/electronic radars)
-        self.b_scope = BScope(max_range_km=200.0, azimuth_limits=(-60.0, 60.0))
-        self.b_scope.hide()  # Hidden by default (PPI is default)
-        self.scope_splitter.addWidget(self.b_scope)
-
-        # Track active display type
-        self.active_display = "ppi"  # "ppi" or "b_scope"
-
-        # A-Scope (diagnostic)
-        self.a_scope = AScope(max_range_km=150.0)
-        self.scope_splitter.addWidget(self.a_scope)
-
-        # Set splitter sizes: [PPI, B-Scope(hidden), A-Scope]
-        # 60% PPI, 0% B-Scope (hidden), 40% A-Scope
-        self.scope_splitter.setSizes([500, 0, 300])
-        self.scope_splitter.setCollapsible(0, False)  # PPI cannot be collapsed
-        self.scope_splitter.setCollapsible(1, True)  # B-Scope can be hidden
-        self.scope_splitter.setCollapsible(2, False)  # A-Scope cannot be collapsed
-
-        # Ensure A-Scope has minimum height
-        self.a_scope.setMinimumHeight(180)
-
-        scope_layout.addWidget(self.scope_splitter)
-        self.display_tabs.addTab(scope_tab, "📡 SCOPE")
-
-        # ═══ TAB 2: RHI (Elevation View) ═══
-        self.rhi_scope = RHIScope(max_range_km=150.0, max_altitude_m=15000.0)
-        self.display_tabs.addTab(self.rhi_scope, "📐 ELEVATION (RHI)")
-
-        # ═══ TAB 3: 3D TACTICAL MAP ═══
-        self.tactical_3d = TacticalMap3D(max_range_km=150.0, max_altitude_km=15.0)
-        self.display_tabs.addTab(self.tactical_3d, "🗺️ 3D TACTICAL")
-
-        main_layout.addWidget(self.display_tabs)
-
-        # Right dock for controls
-        control_dock = QDockWidget("CONTROLS", self)
-        control_dock.setObjectName("controls_dock")
-        control_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-
-        self.control_panel = ControlPanel()
-        self.control_panel.set_freq_callback(self._on_freq_changed)
-        self.control_panel.set_power_callback(self._on_power_changed)
-        self.control_panel.set_range_callback(self._on_range_changed)
-        self.control_panel.set_speed_callback(self._on_speed_changed)
-        self.control_panel.set_arch_callback(self._on_arch_preset_changed)
-        self.control_panel.play_btn.clicked.connect(self._on_play_toggled)
-        self.control_panel.reset_btn.clicked.connect(self._on_reset)
-
-        control_dock.setWidget(self.control_panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, control_dock)
-
-        # Left dock for Target Inspector
-        self.inspector_dock = QDockWidget("TARGET", self)
-        self.inspector_dock.setObjectName("inspector_dock")
-        self.inspector_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-        self.inspector_dock.setMaximumWidth(350)  # Prevent over-expansion
-
-        self.target_inspector = TargetInspector()
-        self.inspector_dock.setWidget(self.target_inspector)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.inspector_dock)
-
-        # Connect PPI target selection to inspector
-        self.ppi_scope.target_selected.connect(self._on_target_selected)
-
-        # Connect ECM state changes to simulation thread
-        self.target_inspector.ecm_changed.connect(self._on_ecm_state_changed)
-
-        # Store target data for lookup
-        self._target_data_cache = {}
-
-        # Bottom dock for Playback Panel
-        self.playback_dock = QDockWidget("REPLAY", self)
-        self.playback_dock.setObjectName("playback_dock")
-        self.playback_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-
-        self.playback_panel = PlaybackPanel()
-        self.playback_panel.file_load_requested.connect(self._on_load_recording)
-        self.playback_panel.time_changed.connect(self._on_replay_time_changed)
-        self.playback_panel.stop_requested.connect(self._on_replay_stopped)
-        self.playback_panel.set_enabled(False)  # Disabled until file loaded
-
-        self.playback_dock.setWidget(self.playback_panel)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.playback_dock)
-
-        # Left dock for Analysis Panel (hidden by default)
-        self.analysis_dock = QDockWidget("ANALYSIS", self)
-        self.analysis_dock.setObjectName("analysis_dock")
-        self.analysis_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.analysis_dock.setMaximumWidth(350)  # Prevent over-expansion
-
-        self.analysis_panel = AnalysisPanel()
-        self.analysis_dock.setWidget(self.analysis_panel)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.analysis_dock)
-        self.analysis_dock.hide()  # Hidden until replay mode
-
-        # Right dock for Range-Doppler Scope
-        self.rd_dock = QDockWidget("RANGE-DOPPLER", self)
-        self.rd_dock.setObjectName("rd_dock")
-        self.rd_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-
-        self.rd_scope = RangeDopplerScope(max_range_km=150.0, max_velocity_mps=500.0)
-        self.rd_dock.setWidget(self.rd_scope)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.rd_dock)
-
-        # Tabify Range-Doppler with Controls dock
-        self.tabifyDockWidget(control_dock, self.rd_dock)
-        control_dock.raise_()  # Show controls by default
-
-    def _setup_menu(self) -> None:
-        """Setup menu bar."""
-        menubar = self.menuBar()
-        menubar.setStyleSheet(
-            """
-            QMenuBar {
-                background-color: #001a0d;
-                color: #00dd66;
-                font-family: 'Consolas', monospace;
-            }
-            QMenuBar::item:selected {
-                background-color: #003322;
-            }
-            QMenu {
-                background-color: #001a0d;
-                color: #00dd66;
-            }
-            QMenu::item:selected {
-                background-color: #003322;
-            }
-        """
-        )
-
-        # File menu
-        file_menu = menubar.addMenu("&File")
-
-        # Load Scenario action
-        load_scenario_action = QAction("&Load Scenario...", self)
-        load_scenario_action.setShortcut("Ctrl+O")
-        load_scenario_action.triggered.connect(self._on_load_scenario)
-        file_menu.addAction(load_scenario_action)
-
-        # Built-in scenarios submenu
-        presets_menu = file_menu.addMenu("⚡ &Built-in Scenarios")
-        self._populate_scenario_presets_menu(presets_menu)
-
-        # Save-scenario action
-        save_scenario_action = QAction("&Save Scenario As...", self)
-        save_scenario_action.setShortcut("Ctrl+Shift+S")
-        save_scenario_action.triggered.connect(self._on_save_scenario)
-        file_menu.addAction(save_scenario_action)
-
-        file_menu.addSeparator()
-
-        # Recording controls
-        self.start_rec_action = QAction("⏺ Start &Recording", self)
-        self.start_rec_action.setShortcut("Ctrl+R")
-        self.start_rec_action.triggered.connect(self._on_start_recording)
-        file_menu.addAction(self.start_rec_action)
-
-        self.stop_rec_action = QAction("⏹ Stop Recordin&g", self)
-        self.stop_rec_action.triggered.connect(self._on_stop_recording)
-        self.stop_rec_action.setEnabled(False)
-        file_menu.addAction(self.stop_rec_action)
-
-        file_menu.addSeparator()
-
-        exit_action = QAction("E&xit", self)
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        # Simulation menu
-        sim_menu = menubar.addMenu("&Simulation")
-
-        start_action = QAction("&Start", self)
-        start_action.triggered.connect(self._start_simulation)
-        sim_menu.addAction(start_action)
-
-        stop_action = QAction("Sto&p", self)
-        stop_action.triggered.connect(self._stop_simulation)
-        sim_menu.addAction(stop_action)
-
-        # View menu
-        view_menu = menubar.addMenu("&View")
-
-        zoom_in = QAction("Zoom &In", self)
-        zoom_in.setShortcut("Ctrl++")
-        view_menu.addAction(zoom_in)
-
-        zoom_out = QAction("Zoom &Out", self)
-        zoom_out.setShortcut("Ctrl+-")
-        view_menu.addAction(zoom_out)
-
-        view_menu.addSeparator()
-
-        # Show Analysis action (opens separate window)
-        show_analysis = QAction("Show &Analysis Window", self)
-        show_analysis.triggered.connect(
-            lambda: self.analysis_window.show() or self.analysis_window.raise_()
-        )
-        view_menu.addAction(show_analysis)
-
-        view_menu.addSeparator()
-
-        # Reset Layout action
-        reset_layout = QAction("&Reset Layout", self)
-        reset_layout.setShortcut("Ctrl+Shift+R")
-        reset_layout.triggered.connect(self._reset_layout)
-        view_menu.addAction(reset_layout)
-
-        # ═══ ADVANCED MENU ═══
-        advanced_menu = menubar.addMenu("&Advanced")
-
-        # LPI Mode submenu
-        lpi_menu = advanced_menu.addMenu("📡 LPI Mode")
-
-        self.lpi_action = QAction("Enable &LPI Mode", self)
-        self.lpi_action.setCheckable(True)
-        self.lpi_action.setChecked(False)
-        self.lpi_action.triggered.connect(self._on_lpi_toggled)
-        lpi_menu.addAction(self.lpi_action)
-
-        lpi_menu.addSeparator()
-
-        # LPI Technique selection
-        self.lpi_fhss = QAction("FHSS (Frequency Hopping)", self)
-        self.lpi_fhss.setCheckable(True)
-        self.lpi_fhss.setChecked(True)
-        self.lpi_fhss.triggered.connect(lambda: self._set_lpi_technique("FHSS"))
-        lpi_menu.addAction(self.lpi_fhss)
-
-        self.lpi_dsss = QAction("DSSS (Direct Sequence)", self)
-        self.lpi_dsss.setCheckable(True)
-        self.lpi_dsss.triggered.connect(lambda: self._set_lpi_technique("DSSS"))
-        lpi_menu.addAction(self.lpi_dsss)
-
-        self.lpi_costas = QAction("Costas Array", self)
-        self.lpi_costas.setCheckable(True)
-        self.lpi_costas.triggered.connect(lambda: self._set_lpi_technique("Costas"))
-        lpi_menu.addAction(self.lpi_costas)
-
-        advanced_menu.addSeparator()
-
-        # Sensor Fusion
-        fusion_menu = advanced_menu.addMenu("🔗 Sensor Fusion")
-
-        self.fusion_action = QAction("Enable &Sensor Fusion", self)
-        self.fusion_action.setCheckable(True)
-        self.fusion_action.setChecked(False)
-        self.fusion_action.triggered.connect(self._on_fusion_toggled)
-        fusion_menu.addAction(self.fusion_action)
-
-        fusion_menu.addSeparator()
-
-        self.fusion_ci = QAction("Covariance Intersection", self)
-        self.fusion_ci.setCheckable(True)
-        self.fusion_ci.setChecked(True)
-        self.fusion_ci.triggered.connect(
-            lambda: self._set_fusion_method("covariance_intersection")
-        )
-        fusion_menu.addAction(self.fusion_ci)
-
-        self.fusion_independent = QAction("Independent Gaussian", self)
-        self.fusion_independent.setCheckable(True)
-        self.fusion_independent.triggered.connect(
-            lambda: self._set_fusion_method("independent_gaussian")
-        )
-        fusion_menu.addAction(self.fusion_independent)
-
-        advanced_menu.addSeparator()
-
-        # SAR Image Generator
-        self.sar_action = QAction("🛰️ Generate &SAR Image...", self)
-        self.sar_action.setShortcut("Ctrl+Shift+G")
-        self.sar_action.triggered.connect(self._on_generate_sar)
-        advanced_menu.addAction(self.sar_action)
-
-        advanced_menu.addSeparator()
-
-        # Clutter, MTI, and ECCM
-
-        # Environmental Clutter
-        self.clutter_action = QAction("🌧️ Enable Environmental &Clutter", self)
-        self.clutter_action.setCheckable(True)
-        self.clutter_action.setChecked(False)
-        self.clutter_action.triggered.connect(self._on_clutter_toggled)
-        advanced_menu.addAction(self.clutter_action)
-
-        # MTI Filter
-        self.mti_action = QAction("🔍 Enable &MTI Filter", self)
-        self.mti_action.setCheckable(True)
-        self.mti_action.setChecked(False)
-        self.mti_action.setToolTip(
-            "Moving Target Indication: Filters slow/stationary targets"
-        )
-        self.mti_action.triggered.connect(self._on_mti_toggled)
-        advanced_menu.addAction(self.mti_action)
-
-        # ECCM: Frequency Agility
-        self.eccm_action = QAction("⚡ ECCM: Frequency &Agility", self)
-        self.eccm_action.setCheckable(True)
-        self.eccm_action.setChecked(False)
-        self.eccm_action.setToolTip(
-            "Counter-jamming: Hop frequency to defeat spot jammers"
-        )
-        self.eccm_action.triggered.connect(self._on_eccm_toggled)
-        advanced_menu.addAction(self.eccm_action)
-
-        advanced_menu.addSeparator()
-
-        # Monopulse tracking
-        self.monopulse_action = QAction("🎯 Enable &Monopulse Tracking", self)
-        self.monopulse_action.setCheckable(True)
-        self.monopulse_action.setChecked(False)
-        self.monopulse_action.setToolTip(
-            "Sum/Difference pattern: Sub-beamwidth angular accuracy"
-        )
-        self.monopulse_action.triggered.connect(self._on_monopulse_toggled)
-        advanced_menu.addAction(self.monopulse_action)
-
-        advanced_menu.addSeparator()
-
-        # Pulse-Doppler processing
-        self.pd_action = QAction("📡 Enable &Pulse-Doppler Processing", self)
-        self.pd_action.setCheckable(True)
-        self.pd_action.setChecked(False)
-        self.pd_action.setToolTip(
-            "Signal-level CPI processing: Matched Filter → MTI → Doppler FFT\n"
-            "Reference: Richards (2005)"
-        )
-        self.pd_action.triggered.connect(self._on_pulse_doppler_toggled)
-        advanced_menu.addAction(self.pd_action)
-
-        # MTI sub-options
-        self.pd_mti_action = QAction("🔇 Enable MTI Canceller (2-pulse)", self)
-        self.pd_mti_action.setCheckable(True)
-        self.pd_mti_action.setChecked(False)
-        self.pd_mti_action.setToolTip(
-            "2-pulse MTI: y[n]=x[n]-x[n-1], null at zero Doppler\n"
-            "Suppresses stationary clutter >60 dB"
-        )
-        self.pd_mti_action.triggered.connect(self._on_pd_mti_toggled)
-        advanced_menu.addAction(self.pd_mti_action)
-
-        advanced_menu.addSeparator()
-
-        # Extended Kalman filter
-        self.ekf_action = QAction("🎯 Use Extended &Kalman Filter (Polar)", self)
-        self.ekf_action.setCheckable(True)
-        self.ekf_action.setChecked(False)
-        self.ekf_action.setToolTip(
-            "EKF with polar [r,θ] measurements\n"
-            "Adaptive R from SNR, Joseph form update\n"
-            "Reference: Bar-Shalom (2001)"
-        )
-        self.ekf_action.triggered.connect(self._on_ekf_toggled)
-        advanced_menu.addAction(self.ekf_action)
-
-        # Electronic-warfare controls
-        advanced_menu.addSeparator()
-        ew_menu = advanced_menu.addMenu("⚡ Electronic Warfare")
-
-        self.jamming_action = QAction("🔴 &Jamming Environment", self)
-        self.jamming_action.setCheckable(True)
-        self.jamming_action.setChecked(False)
-        self.jamming_action.setToolTip(
-            "Activate noise/deception jamming\n"
-            "Elevates A-scope noise floor\n"
-            "Reference: Schleher (1999)"
-        )
-        self.jamming_action.triggered.connect(self._on_jamming_toggled)
-        ew_menu.addAction(self.jamming_action)
-
-        ew_menu.addSeparator()
-
-        self.freq_agility_action = QAction("📡 &Frequency Agility (ECCM)", self)
-        self.freq_agility_action.setCheckable(True)
-        self.freq_agility_action.setChecked(False)
-        self.freq_agility_action.setToolTip(
-            "Hop carrier frequency per CPI\n"
-            "Reduces narrowband J/S by 10·log₁₀(N)\n"
-            "Reference: Schleher (1999), Ch. 8.2"
-        )
-        self.freq_agility_action.triggered.connect(self._on_freq_agility_toggled)
-        ew_menu.addAction(self.freq_agility_action)
-
-        self.prf_stagger_action = QAction("⚡ &PRF Stagger (ECCM)", self)
-        self.prf_stagger_action.setCheckable(True)
-        self.prf_stagger_action.setChecked(False)
-        self.prf_stagger_action.setToolTip(
-            "Vary PRI ±5% to defeat RGPO\nReference: Schleher (1999), Ch. 8.4"
-        )
-        self.prf_stagger_action.triggered.connect(self._on_prf_stagger_toggled)
-        ew_menu.addAction(self.prf_stagger_action)
-
-    def _setup_status_bar(self) -> None:
-        """Setup status bar."""
-        self.status_bar = QStatusBar()
-        self.status_bar.setStyleSheet(
-            """
-            QStatusBar {
-                background-color: #001a0d;
-                color: #00aa55;
-                font-family: 'Consolas', monospace;
-                font-size: 11px;
-            }
-        """
-        )
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("RadarSim Ready | Press PLAY to start simulation")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # SIMULATION CONTROL
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _start_simulation(self) -> None:
-        """Start a simulation thread for ``self.engine``, keeping pause and speed."""
-        if self.sim_thread is not None:
-            self._stop_simulation()
-
-        # Parented to the window so Qt never destroys a thread that is still running.
-        self.sim_thread = SimulationThread(self.engine, update_rate_hz=30.0, parent=self)
-        self.sim_thread.update_data.connect(self._on_update)
-        self.sim_thread.error.connect(self._on_error)
-        self.sim_thread.paused_changed.connect(self._on_paused_changed)
-        self.sim_thread.finished.connect(self.sim_thread.deleteLater)
-        self.sim_thread.set_speed(self._sim_speed)
-        if self._sim_paused:
-            self.sim_thread.pause()
-        self._sync_play_button()
-
-        self.sim_thread.start()
-        self.status_bar.showMessage("Simulation RUNNING")
-
-    def _stop_simulation(self) -> None:
-        """Stop the simulation thread and wait for the current step to finish."""
-        thread = self.sim_thread
-        if thread is None:
-            return
-        self.sim_thread = None
-        # Disconnect first so frames already queued by the old engine are dropped.
-        thread.update_data.disconnect(self._on_update)
-        thread.error.disconnect(self._on_error)
-        thread.paused_changed.disconnect(self._on_paused_changed)
-        thread.stop()
-        if not thread.wait(SIM_THREAD_STOP_TIMEOUT_MS):
-            logger.warning(
-                "Simulation thread did not stop within %d ms", SIM_THREAD_STOP_TIMEOUT_MS
-            )
-        self.status_bar.showMessage("Simulation STOPPED")
-
-    def _submit_to_engine(self, command) -> None:
-        """Apply ``command(engine)`` safely, whether or not the simulation is running."""
-        if self.sim_thread is not None:
-            self.sim_thread.submit(command)
-        else:
-            command(self.engine)
-
-    @Slot(dict)
-    def _on_update(self, state: dict) -> None:
-        """Handle simulation state update."""
-        # Route to active display
-        if self.active_display == "b_scope":
-            self.b_scope.update_display(state)
-        else:
-            self.ppi_scope.update_display(state)
-
-        self.a_scope.update_display(state)
-        self.rd_scope.update_display(state)  # Range-Doppler scope
-        self.rhi_scope.update_display(state)  # RHI (Elevation) scope
-        self.tactical_3d.update_display(state)  # 3D Tactical map
-
-        # Record state if recording is active
-        if self.is_recording:
-            self.recorder.record_state(state)
-
-        # Cache target data for inspector lookup
-        targets = state.get("targets", [])
-        for target in targets:
-            self._target_data_cache[target["id"]] = target
-
-        # Update inspector if target is selected
-        if self.ppi_scope.selected_target_id is not None:
-            target_data = self._target_data_cache.get(self.ppi_scope.selected_target_id)
-            if target_data:
-                self.target_inspector.update_target(target_data)
-
-        # Update status bar
-        time_s = state.get("time", 0)
-        detections = state.get("detection_count", 0)
-        total = state.get("total_targets", 0)
-        self.status_bar.showMessage(
-            f"TIME: {time_s:.1f}s | TARGETS: {total} | DETECTIONS: {detections}"
-        )
-
-    @Slot(str)
-    def _on_error(self, error_msg: str) -> None:
-        """Handle simulation error. Step errors also pause the loop."""
-        self.status_bar.showMessage(f"ERROR: {error_msg}")
-        QMessageBox.warning(self, "Simulation Error", error_msg)
-
-    @Slot(bool)
-    def _on_paused_changed(self, paused: bool) -> None:
-        self._sim_paused = paused
-        self._sync_play_button()
-
-    def _sync_play_button(self) -> None:
-        """Button shows the action it will perform: PAUSE while running, PLAY while paused."""
-        button = self.control_panel.play_btn
-        button.blockSignals(True)
-        button.setChecked(not self._sim_paused)
-        button.setText("▶ PLAY" if self._sim_paused else "❚❚ PAUSE")
-        button.blockSignals(False)
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # TARGET & ECM HANDLERS
-    # ═══════════════════════════════════════════════════════════════════════
-
-    @Slot(int)
-    def _on_target_selected(self, target_id: int) -> None:
-        """Handle target selection from PPI scope."""
-        target_data = self._target_data_cache.get(target_id)
-        self.target_inspector.update_target(target_data)
-        self.status_bar.showMessage(f"TARGET {target_id} SELECTED")
-
-    @Slot(bool, str, int)
-    def _on_ecm_state_changed(
-        self, active: bool, ecm_type: str, target_id: int
-    ) -> None:
-        """
-        Handle ECM state change from TargetInspector.
-
-        Forwards the ECM state to the simulation thread for processing.
-        """
-        if self.sim_thread is not None:
-            self.sim_thread.set_ecm_state(active, ecm_type, target_id)
-            print(
-                f"[ECM] Forwarded to engine: Active={active}, Type={ecm_type}, Target={target_id}"
-            )
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # CONTROL PANEL CALLBACKS
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _on_freq_changed(self, frequency_hz: float) -> None:
-        """
-        Handle frequency slider change.
-
-        Updates radar frequency in real-time, affecting:
-        - Wavelength (λ = c/f)
-        - Atmospheric attenuation (especially at 60 GHz O₂ resonance)
-        - Doppler resolution
-        """
-        self._submit_to_engine(
-            lambda engine: setattr(engine.radar, "frequency_hz", frequency_hz)
-        )
-        self.status_bar.showMessage(f"FREQ: {frequency_hz / 1e9:.1f} GHz")
-
-    def _on_power_changed(self, power_watts: float) -> None:
-        """
-        Handle power slider change.
-
-        Updates radar transmit power in real-time, affecting:
-        - SNR (directly proportional)
-        - Detection range (∝ P^1/4)
-        """
-        self._submit_to_engine(
-            lambda engine: setattr(engine.radar, "power_watts", power_watts)
-        )
-        self.status_bar.showMessage(f"POWER: {power_watts / 1000:.0f} kW")
-
-    def _on_range_changed(self, range_km: float) -> None:
-        """Handle range slider change."""
-        self.ppi_scope.set_max_range(range_km)
-
-    def _on_speed_changed(self, speed: float) -> None:
-        """Handle speed slider change."""
-        self._sim_speed = speed
-        if self.sim_thread:
-            self.sim_thread.set_speed(speed)
-
-    def _on_arch_preset_changed(self, preset) -> None:
-        """
-        Handle radar architecture preset change from dropdown.
-
-        Updates:
-            1. PPI scope scan mode (CIRCULAR/SECTOR/STARE)
-            2. Engine radar parameters (frequency, power, wavelength)
-            3. Status bar with new physics values
-        """
-        try:
-            # Import DisplayType for checking
-            from src.physics.radar_equation import DisplayType
-
-            # 1. Switch display based on preset display type
-            self._switch_display(preset.display_type)
-
-            # 2. Update scope settings based on display type
-            if preset.display_type == DisplayType.B_SCOPE:
-                # Update B-Scope settings
-                if preset.sector_limits:
-                    self.b_scope.set_azimuth_limits(
-                        preset.sector_limits[0], preset.sector_limits[1]
-                    )
-                self.b_scope.set_max_range(preset.max_range_km)
-            else:
-                # Update PPI scope scan mode
-                scan_type_str = preset.scan_type.value
-                self.ppi_scope.set_scan_mode(
-                    scan_type=scan_type_str,
-                    sector_limits=preset.sector_limits,
-                    scan_speed_deg_s=preset.scan_speed_deg_s,
-                    stare_angle_deg=0.0,
-                )
-                self.ppi_scope.set_max_range(preset.max_range_km)
-
-            # 3. Update engine radar parameters (if engine exists)
-            def apply_preset(engine) -> None:
-                engine.radar.frequency_hz = preset.frequency_hz
-                engine.radar.power_watts = preset.peak_power_watts
-
-            self._submit_to_engine(apply_preset)
-
-            # 4. Show status
-            wavelength_cm = preset.wavelength_m * 100
-            display_name = (
-                "B-SCOPE" if preset.display_type == DisplayType.B_SCOPE else "PPI"
-            )
-            self.status_bar.showMessage(
-                f"RADAR: {preset.name} | {display_name} | λ={wavelength_cm:.1f}cm | G={preset.gain_db:.1f}dB"
-            )
-
-            print(
-                f"[ARCH] Switched to {display_name} display, limits={preset.sector_limits}"
-            )
-
-        except Exception as e:
-            print(f"[ARCH] Error applying preset to scope: {e}")
-
-    def _select_preset_without_applying(self, preset_name) -> None:
-        """Show ``preset_name`` in the combo and switch display, keeping radar values."""
-        if not preset_name:
-            return
-        from src.physics.radar_equation import get_preset
-
-        combo = self.control_panel.arch_combo
-        index = combo.findText(preset_name)
-        preset = get_preset(preset_name)
-        if index < 0 or preset is None:
-            return
-        combo.blockSignals(True)
-        combo.setCurrentIndex(index)
-        combo.blockSignals(False)
-        self._switch_display(preset.display_type)
-
-    def _switch_display(self, display_type) -> None:
-        """
-        Switch between PPI and B-Scope displays.
-
-        Args:
-            display_type: DisplayType enum (PPI or B_SCOPE)
-        """
-        from src.physics.radar_equation import DisplayType
-
-        if display_type == DisplayType.B_SCOPE:
-            if self.active_display != "b_scope":
-                self.ppi_scope.hide()
-                self.b_scope.show()
-                self.active_display = "b_scope"
-                print("[DISPLAY] Switched to B-SCOPE (Cartesian)")
-        else:
-            if self.active_display != "ppi":
-                self.b_scope.hide()
-                self.ppi_scope.show()
-                self.active_display = "ppi"
-                print("[DISPLAY] Switched to PPI (Polar)")
-
-        # Restore splitter sizes after display switch to prevent layout breakage
-        if hasattr(self, "scope_splitter"):
-            self.scope_splitter.setSizes([500, 0, 300])
-
-    def _on_play_toggled(self, checked: bool) -> None:
-        """Handle play/pause button (checked = running)."""
-        self._sim_paused = not checked
-        if self.sim_thread is None:
-            self._start_simulation()
-        elif checked:
-            self.sim_thread.resume()
-        else:
-            self.sim_thread.pause()
-        self._sync_play_button()
-
-    def _toggle_pause(self) -> None:
-        self.control_panel.play_btn.click()
-
-    def _on_reset(self) -> None:
-        """Restart the current scenario (or the demo) from t = 0."""
-        if self.mode != SimulationMode.LIVE:
-            self._switch_to_live_mode()
-            return
-        if self._current_scenario_path:
-            self.load_scenario(self._current_scenario_path)
-        else:
-            self.engine = create_demo_scenario()
-            self._start_simulation()
-        self.status_bar.showMessage("Simulation reset")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # RECORDING HANDLERS
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _on_start_recording(self) -> None:
-        """Start recording simulation data."""
-        if self.is_recording:
-            return
-
-        # Build config from current radar
-        config = {
-            "radar_frequency_hz": self.engine.radar.frequency_hz,
-            "radar_power_watts": self.engine.radar.power_watts,
-            "radar_gain_db": self.engine.radar.antenna_gain_db,
+        self.setWindowTitle("RadarSim")
+        self.setObjectName("Root")
+        self.setMinimumSize(1024, 640)
+        self.settings = QSettings("RadarSim", "RadarSim")
+        self.controller = SimulationController(data_dir() / "recordings", self)
+        self.selected_id: Optional[int] = None
+        self.editing = False
+        self.profile = self.settings.value("view/profile", "auto")
+        self._frame_received = 0.0
+        self._render_ms = 0.0
+        self._interval_index = 0
+        self._fps_counter = [0, time.perf_counter(), 0.0]
+        self._settings_dirty = True
+
+        self._build()
+        self._build_menu()
+        self._connect()
+        self.toasts = ToastHost(self, bottom_margin=self.transport.sizeHint().height() + SPACE.lg)
+
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.timeout.connect(self._render)
+        self._apply_profile(self.profile)
+        self._restore_layout()
+
+        path = scenario_path or self.settings.value("session/scenario", "")
+        if not path or not Path(path).exists():
+            path = str(scenarios_dir() / "basic_tracking.json")
+        if not self.controller.load_scenario(path):
+            self.controller.new_scenario()
+
+    # ---------------------------------------------------------------- layout
+
+    def _build(self) -> None:
+        root = QWidget()
+        root.setObjectName("Root")
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = HeaderStrip()
+        outer.addWidget(self.header)
+
+        self.body = QSplitter(Qt.Orientation.Horizontal)
+        self.body.setChildrenCollapsible(False)
+        self.objects = ObjectsPanel()
+        self.objects.setMinimumWidth(200)
+        self.body.addWidget(self.objects)
+
+        centre = QWidget()
+        centre_layout = QVBoxLayout(centre)
+        centre_layout.setContentsMargins(0, 0, 0, 0)
+        centre_layout.setSpacing(0)
+        self.tabs = QTabBar()
+        self.tabs.setExpanding(False)
+        self.tabs.setDrawBase(False)
+        tab_row = QFrame()
+        tab_row.setObjectName("Panel")
+        tab_row.setProperty("rule", "bottom")
+        tab_layout = QHBoxLayout(tab_row)
+        tab_layout.setContentsMargins(SPACE.s, 0, SPACE.s, 0)
+        tab_layout.addWidget(self.tabs)
+        tab_layout.addStretch()
+        self.editor_badge = QPushButton(tr("Done editing"))
+        self.editor_badge.setProperty("variant", "primary")
+        self.editor_badge.setVisible(False)
+        tab_layout.addWidget(self.editor_badge)
+        self.add_object_button = QPushButton(icon("add-target", 16), tr("Place object"))
+        self.add_object_button.setCheckable(True)
+        self.add_object_button.setVisible(False)
+        tab_layout.addWidget(self.add_object_button)
+        centre_layout.addWidget(tab_row)
+
+        self.views = {
+            "ppi": PPIView(),
+            "bscope": BScopeView(),
+            "rhi": RHIView(),
+            "ascope": AScopeView(),
+            "rd": RangeDopplerView(),
+            "3d": Tactical3DView(),
         }
+        self.stack = QStackedWidget()
+        for key, view in self.views.items():
+            self.tabs.addTab(tr(view.title))
+            self.stack.addWidget(view)
+        self.vertical = QSplitter(Qt.Orientation.Vertical)
+        self.vertical.setChildrenCollapsible(True)
+        self.vertical.addWidget(self.stack)
+        self.drawer = QTabWidget()
+        self.drawer.setDocumentMode(True)
+        self.event_log = EventLog()
+        self.coverage = CoveragePanel(self.controller)
+        self.monte_carlo = MonteCarloPanel(self.controller)
+        self.drawer.addTab(self.event_log, tr("Events"))
+        self.drawer.addTab(self.coverage, tr("Coverage"))
+        self.drawer.addTab(self.monte_carlo, tr("Monte Carlo"))
+        self.vertical.addWidget(self.drawer)
+        self.vertical.setStretchFactor(0, 4)
+        self.vertical.setStretchFactor(1, 1)
+        centre_layout.addWidget(self.vertical, 1)
+        self.body.addWidget(centre)
 
-        self.recorder.start_recording(config)
-        self.is_recording = True
+        right = QScrollArea()
+        right.setWidgetResizable(True)
+        right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right.setFrameShape(QFrame.Shape.NoFrame)
+        right.setMinimumWidth(290)
+        right_body = QFrame()
+        right_body.setObjectName("Panel")
+        right_body.setProperty("rule", "left")
+        right_layout = QVBoxLayout(right_body)
+        right_layout.setContentsMargins(0, SPACE.xs, 0, SPACE.lg)
+        right_layout.setSpacing(0)
+        self.inspector = Inspector()
+        self.settings_panel = SettingsPanel(self.controller)
+        right_layout.addWidget(self.inspector)
+        right_layout.addWidget(self.settings_panel)
+        right.setWidget(right_body)
+        self.body.addWidget(right)
+        self.body.setStretchFactor(1, 1)
+        self.body.setSizes([230, 900, 310])
+        outer.addWidget(self.body, 1)
 
-        # Update menu items
-        self.start_rec_action.setEnabled(False)
-        self.stop_rec_action.setEnabled(True)
+        self.transport = TransportBar()
+        outer.addWidget(self.transport)
+        self.setCentralWidget(root)
 
-        self.status_bar.showMessage("⏺ RECORDING...")
-        print("[RECORDING] Started")
+    def _build_menu(self) -> None:
+        bar = self.menuBar()
 
-    def _on_stop_recording(self) -> None:
-        """Stop recording and save to HDF5."""
-        if not self.is_recording:
+        def action(menu, text, slot, shortcut=None, checkable=False, checked=False):
+            act = QAction(text, self)
+            if shortcut:
+                act.setShortcut(QKeySequence(shortcut))
+            act.setCheckable(checkable)
+            act.setChecked(checked)
+            act.triggered.connect(slot)
+            menu.addAction(act)
+            return act
+
+        file_menu = bar.addMenu(tr("&File"))
+        action(file_menu, tr("New scenario"), self._new_scenario, "Ctrl+N")
+        action(file_menu, tr("Open scenario…"), self._open_scenario, "Ctrl+O")
+        builtin = file_menu.addMenu(tr("Built-in scenarios"))
+        for path in sorted(scenarios_dir().glob("*.*")):
+            if path.suffix.lower() in (".yaml", ".yml", ".json"):
+                act = QAction(path.stem.replace("_", " ").capitalize(), self)
+                act.triggered.connect(lambda _=False, p=str(path): self.controller.load_scenario(p))
+                builtin.addAction(act)
+        action(file_menu, tr("Save scenario as…"), self._save_scenario, "Ctrl+S")
+        file_menu.addSeparator()
+        action(file_menu, tr("Export report…"), self._export_report, "Ctrl+E")
+        action(file_menu, tr("Open recording…"), self._open_recording)
+        file_menu.addSeparator()
+        action(file_menu, tr("Quit"), self.close, "Ctrl+Q")
+
+        sim = bar.addMenu(tr("&Simulation"))
+        action(sim, tr("Play / pause"), self.controller.toggle, "Space")
+        action(sim, tr("Single step"), self.controller.step, ".")
+        action(sim, tr("Restart scenario"), self._restart, "R")
+
+        view = bar.addMenu(tr("&View"))
+        for index, key in enumerate(self.views):
+            action(view, tr(self.views[key].title), lambda _=False, i=index: self.tabs.setCurrentIndex(i), str(index + 1))
+        view.addSeparator()
+        action(view, tr("Zoom in"), lambda: self._zoom(1), "+")
+        action(view, tr("Zoom out"), lambda: self._zoom(-1), "-")
+        action(view, tr("Fit all objects"), self._fit, "F")
+        view.addSeparator()
+        self.truth_action = action(view, tr("Show ground truth"), self._toggle_truth, "T", True, True)
+        action(view, tr("Show track uncertainty"), self._toggle_ellipses, None, True, True)
+        action(view, tr("Toggle event drawer"), self._toggle_drawer, "Ctrl+J")
+        view.addSeparator()
+        perf = view.addMenu(tr("Performance"))
+        group = QActionGroup(self)
+        labels = {"auto": tr("Automatic"), "quality": tr("Best quality"), "light": tr("Light (slow machines)")}
+        for key in PROFILES:
+            act = action(perf, labels[key], lambda _=False, k=key: self._apply_profile(k), checkable=True,
+                         checked=key == self.profile)
+            group.addAction(act)
+        reduced = self.settings.value("view/reduced_motion", False, type=bool)
+        motion.set_reduced_motion(reduced)
+        action(view, tr("Reduce motion"), self._toggle_motion, checkable=True, checked=reduced)
+        lang_menu = view.addMenu(tr("Language"))
+        lang_group = QActionGroup(self)
+        for code, name in LANGUAGES.items():
+            act = action(lang_menu, name, lambda _=False, c=code: self._set_language(c), checkable=True,
+                         checked=code == language())
+            lang_group.addAction(act)
+
+        tools = bar.addMenu(tr("&Tools"))
+        self.editor_action = action(tools, tr("Scenario editor"), self._toggle_editor, "Ctrl+Shift+E", True)
+        action(tools, tr("Detection coverage"), lambda: self._open_drawer(1))
+        action(tools, tr("Monte Carlo check"), lambda: self._open_drawer(2))
+        self.record_action = action(tools, tr("Record session"), self._toggle_record, "Ctrl+R", True)
+
+        help_menu = bar.addMenu(tr("&Help"))
+        action(help_menu, tr("Keyboard shortcuts"), self._show_shortcuts, "F1")
+        action(help_menu, tr("Documentation"), lambda: QDesktopServices.openUrl(QUrl(DOCS_URL)))
+        action(help_menu, tr("About RadarSim"), self._show_about)
+
+    def _connect(self) -> None:
+        c = self.controller
+        c.frame.connect(self._on_frame)
+        c.scenario_loaded.connect(self._on_scenario_loaded)
+        c.mode_changed.connect(self._on_mode)
+        c.notice.connect(lambda text, kind: self.toasts.show(text, kind))
+        c.recording_changed.connect(self._on_recording)
+        c.replay_position.connect(self.transport.set_replay_position)
+        self.tabs.currentChanged.connect(self._on_tab)
+        self.objects.target_selected.connect(self._select)
+        for view in self.views.values():
+            if hasattr(view, "target_clicked"):
+                view.target_clicked.connect(self._select)
+        self.views["rd"].enable_requested.connect(lambda: c.set_pulse_doppler(True))
+        self.views["ppi"].point_picked.connect(self._place_object)
+        self.inspector.edited.connect(c.edit_object)
+        self.inspector.delete_requested.connect(self._delete_object)
+        t = self.transport
+        t.play_toggled.connect(c.toggle)
+        t.step_requested.connect(c.step)
+        t.restart_requested.connect(self._restart)
+        t.speed_changed.connect(c.set_speed)
+        t.record_toggled.connect(lambda on: c.start_recording() if on else c.stop_recording())
+        t.seek_requested.connect(c.seek)
+        t.exit_replay.connect(lambda: c.close_replay())
+        self.editor_badge.clicked.connect(lambda: self.editor_action.trigger())
+        self.add_object_button.toggled.connect(self._place_mode)
+
+    # ------------------------------------------------------------ simulation
+
+    def _on_scenario_loaded(self, config) -> None:
+        self.selected_id = None
+        self.objects.set_scenario(config.name, config.description)
+        self.header.scenario.setText(config.name)
+        self.event_log.clear()
+        self.inspector.set_target(None)
+        for view in self.views.values():
+            view.reset()
+        terrain = self.controller.terrain
+        self.views["rhi"].set_terrain(terrain)
+        self.views["3d"].set_terrain(terrain)
+        self.settings_panel.sync(self.controller.call(engine_snapshot))
+        self._fit_pending = True
+        if self.controller.scenario_path:
+            self.settings.setValue("session/scenario", self.controller.scenario_path)
+
+    def _on_frame(self, frame: FrameState) -> None:
+        self._frame_received = time.perf_counter()
+        if frame.events:
+            self.event_log.add(frame.events)
+        if getattr(self, "_fit_pending", False):
+            self._fit_pending = False
+            self.views["ppi"].fit_to(frame)
+            for key in ("bscope", "rhi", "ascope", "3d"):
+                self.views[key].set_max_range(self.views["ppi"].max_range_km)
+
+    def _on_mode(self, mode: str) -> None:
+        if self.editing:
+            mode = "edit"
+        self.header.set_mode(mode)
+        self.transport.set_running(mode == "live" or (mode == "replay" and not self.controller.paused))
+        self.transport.set_replay(self.controller.replaying)
+
+    def _on_recording(self, recording: bool) -> None:
+        self.transport.set_recording(recording)
+        self.record_action.setChecked(recording)
+
+    def _render(self) -> None:
+        frame = self.controller.latest
+        if frame is None:
             return
+        started = time.perf_counter()
+        running = not self.controller.paused and not self.editing
+        extrapolate = 0.0
+        if running and not self.controller.replaying:
+            extrapolate = min((started - self._frame_received) * self.controller.speed, 0.25)
+        view = self.stack.currentWidget()
+        view.render(frame, extrapolate)
+        self.header.set_time(frame.time + extrapolate)
+        self._slow_updates(frame)
+        self._measure(time.perf_counter() - started)
 
-        filepath = self.recorder.stop_recording()
-        self.is_recording = False
+    def _slow_updates(self, frame: FrameState) -> None:
+        """Panels refresh at ~5 Hz; they do not need display-rate updates."""
+        now = time.perf_counter()
+        if now - getattr(self, "_last_slow", 0.0) < 0.2:
+            return
+        self._last_slow = now
+        self.objects.update_frame(frame)
+        self.inspector.update_frame(frame)
 
-        # Update menu items
-        self.start_rec_action.setEnabled(True)
-        self.stop_rec_action.setEnabled(False)
+    def _measure(self, seconds: float) -> None:
+        self._render_ms = 0.9 * self._render_ms + 0.1 * seconds * 1000
+        counter = self._fps_counter
+        counter[0] += 1
+        now = time.perf_counter()
+        if now - counter[1] >= 1.0:
+            counter[2] = counter[0] / (now - counter[1])
+            counter[0], counter[1] = 0, now
+            self.header.status.setText(f"{counter[2]:.0f} fps · {self._render_ms:.1f} ms")
+            if self.profile == "auto":
+                self._adapt_rate()
 
-        if filepath:
-            self.status_bar.showMessage(f"✓ Saved: {filepath}")
-            QMessageBox.information(
-                self,
-                "Recording Saved",
-                f"Recording saved to:\n{filepath}\n\nUse File > Load Scenario to replay.",
-            )
-            print(f"[RECORDING] Saved to: {filepath}")
+    def _adapt_rate(self) -> None:
+        budget = FRAME_INTERVALS_MS[self._interval_index]
+        if self._render_ms > 0.7 * budget and self._interval_index < len(FRAME_INTERVALS_MS) - 1:
+            self._interval_index += 1
+        elif self._interval_index > 0 and self._render_ms < 0.3 * FRAME_INTERVALS_MS[self._interval_index - 1]:
+            self._interval_index -= 1
+        self._timer.setInterval(FRAME_INTERVALS_MS[self._interval_index])
+
+    def _apply_profile(self, profile: str) -> None:
+        import pyqtgraph as pg
+
+        self.profile = profile
+        self.settings.setValue("view/profile", profile)
+        light = profile == "light"
+        pg.setConfigOptions(antialias=not light)
+        self.views["ppi"].afterglow = not light
+        self._interval_index = 1 if light else 0
+        self._timer.start(FRAME_INTERVALS_MS[self._interval_index])
+
+    # -------------------------------------------------------------- actions
+
+    def _on_tab(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        motion.fade_in(self.stack.currentWidget())
+        self.controller.set_include_rd_map(list(self.views)[index] == "rd")
+
+    def _select(self, target_id: Optional[int]) -> None:
+        self.selected_id = target_id
+        for view in self.views.values():
+            view.set_selected(target_id)
+        self.objects.select(target_id)
+        self.inspector.set_target(target_id)
+        if self.controller.latest is not None:
+            self.inspector.update_frame(self.controller.latest)
+
+    def _zoom(self, direction: int) -> None:
+        ppi = self.views["ppi"]
+        ppi.on_wheel(direction)
+        for key in ("bscope", "rhi", "ascope", "3d"):
+            self.views[key].set_max_range(ppi.max_range_km)
+
+    def _fit(self) -> None:
+        if self.controller.latest is not None:
+            self.views["ppi"].fit_to(self.controller.latest)
+            self._zoom(0)
+
+    def _toggle_truth(self, on: bool) -> None:
+        self.views["ppi"].show_truth = on
+        self.views["bscope"].show_truth = on
+
+    def _toggle_ellipses(self, on: bool) -> None:
+        self.views["ppi"].show_ellipses = on
+
+    def _toggle_drawer(self) -> None:
+        sizes = self.vertical.sizes()
+        self.vertical.setSizes([sizes[0] + sizes[1], 0] if sizes[1] > 0 else [int(sum(sizes) * 0.72), int(sum(sizes) * 0.28)])
+
+    def _open_drawer(self, index: int) -> None:
+        self.drawer.setCurrentIndex(index)
+        sizes = self.vertical.sizes()
+        if sizes[1] < 160:
+            self.vertical.setSizes([int(sum(sizes) * 0.62), int(sum(sizes) * 0.38)])
+
+    def _toggle_motion(self, on: bool) -> None:
+        motion.set_reduced_motion(on)
+        self.settings.setValue("view/reduced_motion", on)
+
+    def _set_language(self, code: str) -> None:
+        self.settings.setValue("view/language", code)
+        self.toasts.show(tr("The new language is used after a restart."), "info")
+
+    def _restart(self) -> None:
+        if self.controller.replaying:
+            self.controller.seek(0.0)
         else:
-            self.status_bar.showMessage("Recording failed - no data")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # SCENARIO & REPLAY HANDLERS
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def load_scenario(self, filepath: str) -> bool:
-        """
-        Load scenario from YAML or JSON file into the simulation engine and update GUI.
-
-        Args:
-            filepath: Path to YAML or JSON scenario file
-
-        Returns:
-            True if loaded successfully, False otherwise
-        """
-        try:
-            # Build the new engine first so a bad file leaves the current run intact.
-            loader = ScenarioLoader(filepath)
-            scenario_name = loader.get_scenario_name()
-            new_engine = loader.create_simulation_engine()
-
-            self._stop_simulation()
-            self.engine = new_engine
-            self._current_scenario_path = filepath
-
-            # ═══ TERRAIN INTEGRATION ═══
-            # Pass terrain to visualization components
-            if hasattr(self.engine, "terrain") and self.engine.terrain is not None:
-                terrain = self.engine.terrain
-                # Pass to RHI scope for elevation profile
-                if hasattr(self.rhi_scope, "set_terrain"):
-                    self.rhi_scope.set_terrain(terrain)
-                    print("[TERRAIN] Passed to RHI scope")
-                # Pass to 3D tactical map for surface rendering
-                if hasattr(self.tactical_3d, "set_terrain_from_map"):
-                    self.tactical_3d.set_terrain_from_map(terrain)
-                    print("[TERRAIN] Passed to 3D tactical map")
-
-            # Sync control panel with loaded radar parameters
-            self.control_panel.update_from_radar(self.engine.radar)
-
-            # Auto-switch radar preset if scenario specifies one
-            # The preset only labels the scenario and picks the display; the
-            # scenario's own radar parameters are never overwritten.
-            self._select_preset_without_applying(loader.get_required_preset())
-
-            # Start simulation with new scenario
-            self._start_simulation()
-
-            # ═══ CRITICAL: Restore UI layout after all changes ═══
-            from PySide6.QtWidgets import QApplication
-
-            QApplication.processEvents()  # Let UI fully update
-
-            # Ensure Analysis dock stays hidden (it's only for REPLAY mode)
-            self.analysis_dock.hide()
-
-            # Restore splitter sizes
-            if hasattr(self, "scope_splitter"):
-                self.scope_splitter.setSizes([500, 0, 300])
-                self.a_scope.setMinimumHeight(180)
-
-            self.status_bar.showMessage(f"LOADED: {scenario_name}")
-            return True
-
-        except FileNotFoundError:
-            QMessageBox.critical(self, "Error", f"File not found:\n{filepath}")
-            return False
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load scenario:\n{str(e)}")
-            return False
-
-    def _get_scenarios_dir(self) -> Path:
-        """Locate scenarios directory across installed package, PyInstaller bundle, and repo root."""
-        candidates = []
-
-        # 1. Next to the executable when frozen
-        if getattr(sys, "frozen", False):
-            exe_dir = Path(sys.executable).resolve().parent
-            candidates.append(exe_dir / "scenarios")
-
-        # 2. Inside PyInstaller extraction folder (_MEIPASS)
-        if hasattr(sys, "_MEIPASS"):
-            candidates.append(Path(sys._MEIPASS) / "scenarios")
-
-        # 3. Next to repository root
-        repo_root = Path(__file__).resolve().parents[2]
-        candidates.append(repo_root / "scenarios")
-
-        # 4. Current working directory
-        candidates.append(Path.cwd() / "scenarios")
-
-        for cand in candidates:
-            if cand.is_dir():
-                return cand.resolve()
-
-        return Path("scenarios").resolve()
-
-    def _populate_scenario_presets_menu(self, menu) -> None:
-        """Populate the Built-in Scenarios submenu with discovered scenario files."""
-        scenarios_dir = self._get_scenarios_dir()
-        if not scenarios_dir.is_dir():
-            empty_action = QAction("No scenarios found", self)
-            empty_action.setEnabled(False)
-            menu.addAction(empty_action)
-            return
-
-        scenario_files = sorted(
-            [f for f in scenarios_dir.iterdir() if f.suffix.lower() in (".yaml", ".yml", ".json")]
-        )
-        if not scenario_files:
-            empty_action = QAction("No scenarios found", self)
-            empty_action.setEnabled(False)
-            menu.addAction(empty_action)
-            return
-
-        for s_file in scenario_files:
-            title = s_file.stem.replace("_", " ").title()
-            action = QAction(f"{title} ({s_file.name})", self)
-            action.triggered.connect(
-                lambda checked=False, p=str(s_file): self.load_scenario(p)
-            )
-            menu.addAction(action)
-
-    def _on_load_scenario(self) -> None:
-        """Handle File > Load Scenario action."""
-        initial_dir = str(self._get_scenarios_dir())
-        filepath, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Scenario",
-            initial_dir,
-            "Scenario Files (*.yaml *.yml *.json);;YAML Files (*.yaml *.yml);;JSON Files (*.json);;All Files (*)",
-        )
-
-        if filepath:
-            self.load_scenario(filepath)
-
-    def _switch_to_live_mode(self) -> None:
-        """Switch to LIVE simulation mode."""
-        # Close any open replay
-        if self.replay_loader:
-            self.replay_loader.close()
-            self.replay_loader = None
-
-        self.mode = SimulationMode.LIVE
-
-        # Reset UI
-        self.playback_panel.stop()
-        self.playback_panel.set_enabled(False)
-        self.analysis_dock.hide()
-
-        # Restart live simulation
-        self.engine = create_demo_scenario()
-        self._current_scenario_path = None
-        self._start_simulation()
-
-        self.status_bar.showMessage("MODE: LIVE SIMULATION")
-
-    def _switch_to_replay_mode(self) -> None:
-        """Switch to REPLAY mode."""
-        # Stop live simulation
-        self._stop_simulation()
-
-        self.mode = SimulationMode.REPLAY
-
-        # Enable replay controls (analysis dock stays hidden - user can open via View menu)
-        self.playback_panel.set_enabled(True)
-
-        self.status_bar.showMessage("MODE: REPLAY")
-
-    @Slot(str)
-    def _on_load_recording(self, filepath: str) -> None:
-        """Load an HDF5 recording file."""
-        try:
-            # Close any existing loader
-            if self.replay_loader:
-                self.replay_loader.close()
-
-            # Load new file
-            self.replay_loader = ReplayLoader(filepath)
-
-            # Switch to replay mode
-            self._switch_to_replay_mode()
-
-            # Setup playback panel
-            self.playback_panel.set_duration(self.replay_loader.duration)
-            self.playback_panel.set_time(0)
-
-            # Open analysis in separate window
-            self.analysis_window.set_loader(self.replay_loader)
-            self.analysis_window.show()
-            self.analysis_window.raise_()
-
-            # Show initial state
-            self._on_replay_time_changed(0.0)
-
-            # Restore splitter layout
-            if hasattr(self, "scope_splitter"):
-                self.scope_splitter.setSizes([500, 0, 300])
-
-            self.status_bar.showMessage(
-                f"LOADED: {filepath} | DURATION: {self.replay_loader.duration:.1f}s"
-            )
-
-        except FileNotFoundError:
-            QMessageBox.critical(self, "Error", f"File not found:\n{filepath}")
-        except ValueError as e:
-            QMessageBox.critical(self, "Error", f"Invalid file format:\n{str(e)}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
-
-    @Slot(float)
-    def _on_replay_time_changed(self, t: float) -> None:
-        """Handle timeline scrubbing in replay mode."""
-        if self.mode != SimulationMode.REPLAY or self.replay_loader is None:
-            return
-
-        # Get interpolated state at time t
-        state = self.replay_loader.get_state_at_time(t)
-
-        # Convert to dict format expected by PPI/A-scope
-        state_dict = state.to_dict()
-
-        # Update displays
-        self.ppi_scope.update_display(state_dict)
-        self.a_scope.update_display(state_dict)
-
-        # Update analysis time marker
-        self.analysis_panel.set_current_time(t)
-
-        # Cache target data for inspector
-        for target in state_dict.get("targets", []):
-            self._target_data_cache[target["id"]] = target
-
-        # Update inspector if target is selected
-        if self.ppi_scope.selected_target_id is not None:
-            target_data = self._target_data_cache.get(self.ppi_scope.selected_target_id)
-            if target_data:
-                self.target_inspector.update_target(target_data)
-
-    @Slot()
-    def _on_replay_stopped(self) -> None:
-        """Handle replay stop."""
-        self.status_bar.showMessage("REPLAY STOPPED")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # SETTINGS PERSISTENCE
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _load_settings(self) -> None:
-        """Load saved settings from QSettings."""
-        settings = QSettings("RadarSim", "RadarSimulator")
-
-        # Window geometry
-        geometry = settings.value("window/geometry")
-        if geometry:
-            self.restoreGeometry(geometry)
-
-        # Window geometry only (NOT dock state - causes layout issues)
-
-        # Radar preset
-        preset_index = settings.value("radar/preset_index", 0, type=int)
-        if hasattr(self, "control_panel") and self.control_panel:
-            if preset_index < self.control_panel.arch_combo.count():
-                self._select_preset_without_applying(
-                    self.control_panel.arch_combo.itemText(preset_index)
-                )
-
-        print("[SETTINGS] Loaded saved configuration")
-
-    def _save_settings(self) -> None:
-        """Save current settings to QSettings."""
-        settings = QSettings("RadarSim", "RadarSimulator")
-
-        # Window geometry
-        settings.setValue("window/geometry", self.saveGeometry())
-
-        # Note: NOT saving dock state - causes layout issues when loading scenarios
-
-        # Radar preset
-        if hasattr(self, "control_panel") and self.control_panel:
-            settings.setValue(
-                "radar/preset_index", self.control_panel.arch_combo.currentIndex()
-            )
-
-        print("[SETTINGS] Saved configuration")
-
-    def _reset_layout(self) -> None:
-        """Reset window layout to defaults by clearing saved settings."""
-        # Clear ALL saved settings
-        settings = QSettings("RadarSim", "RadarSimulator")
-        settings.clear()
-        settings.sync()  # Force write to disk
-
-        # Show message and prompt restart
-        QMessageBox.information(
-            self,
-            "Reset Complete",
-            "Settings cleared!\n\nPlease restart the application for changes to take effect.",
-        )
-        print("[SETTINGS] Settings completely cleared!")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # ADVANCED MODULE HANDLERS
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _on_lpi_toggled(self, checked: bool) -> None:
-        """Handle LPI Mode toggle."""
-        self.lpi_enabled = checked
-
-        # Update simulation engine if available
-        if self.sim_thread and hasattr(self.sim_thread, "set_lpi_mode"):
-            self.sim_thread.set_lpi_mode(checked, self.lpi_technique)
-
-        status = "ACTIVE" if checked else "OFF"
-        self.status_bar.showMessage(
-            f"LPI MODE: {status} | Technique: {self.lpi_technique}"
-        )
-        print(
-            f"[LPI] Mode={'ON' if checked else 'OFF'}, Technique={self.lpi_technique}"
-        )
-
-    def _set_lpi_technique(self, technique: str) -> None:
-        """Set LPI waveform technique."""
-        self.lpi_technique = technique
-
-        # Update checkmarks
-        self.lpi_fhss.setChecked(technique == "FHSS")
-        self.lpi_dsss.setChecked(technique == "DSSS")
-        self.lpi_costas.setChecked(technique == "Costas")
-
-        # Notify engine if LPI is enabled
-        if self.lpi_enabled and self.sim_thread:
-            if hasattr(self.sim_thread, "set_lpi_mode"):
-                self.sim_thread.set_lpi_mode(True, technique)
-
-        self.status_bar.showMessage(f"LPI Technique: {technique}")
-        print(f"[LPI] Technique set to: {technique}")
-
-    def _on_fusion_toggled(self, checked: bool) -> None:
-        """Handle Sensor Fusion toggle."""
-        self.fusion_enabled = checked
-
-        # Update simulation engine if available
-        if self.sim_thread and hasattr(self.sim_thread, "set_fusion_mode"):
-            self.sim_thread.set_fusion_mode(checked, self.fusion_method)
-
-        status = "ACTIVE" if checked else "OFF"
-        self.status_bar.showMessage(
-            f"SENSOR FUSION: {status} | Method: {self.fusion_method}"
-        )
-        print(
-            f"[FUSION] Mode={'ON' if checked else 'OFF'}, Method={self.fusion_method}"
-        )
-
-    def _set_fusion_method(self, method: str) -> None:
-        """Set sensor fusion method."""
-        self.fusion_method = method
-
-        # Update checkmarks
-        self.fusion_ci.setChecked(method == "covariance_intersection")
-        self.fusion_independent.setChecked(method == "independent_gaussian")
-
-        # Notify engine if fusion is enabled
-        if self.fusion_enabled and self.sim_thread:
-            if hasattr(self.sim_thread, "set_fusion_mode"):
-                self.sim_thread.set_fusion_mode(True, method)
-
-        self.status_bar.showMessage(f"Fusion Method: {method}")
-        print(f"[FUSION] Method set to: {method}")
-
-    def _on_generate_sar(self) -> None:
-        """Handle SAR Image generation."""
-        # Create or show SAR viewer
-        if self.sar_viewer is None:
-            self.sar_viewer = SARViewer(self)
-
-        # Generate SAR image using advanced module
-        try:
-            import numpy as np
-
-            from src.advanced import AdvancedSARISAR
-
-            # Get current targets from cache
-            targets = list(self._target_data_cache.values())
-
-            if not targets:
-                QMessageBox.warning(
-                    self,
-                    "No Targets",
-                    "No targets available for SAR imaging.\n\n"
-                    "Load a scenario with targets first.",
-                )
-                return
-
-            # Create SAR processor
-            sar = AdvancedSARISAR(
-                fc=10e9,
-                bandwidth=100e6,
-                prf=1000,
-                platform_velocity=100,
-                synthetic_aperture=100,
-            )
-
-            # Extract target positions and RCS
-            positions = []
-            rcs_values = []
-            for t in targets:
-                pos = t.get("position_m", [0, 0, 0])
-                if isinstance(pos, (list, tuple)):
-                    positions.append(pos)
-                else:
-                    positions.append([pos, 0, 0])
-                rcs_values.append(t.get("rcs_m2", 1.0))
-
-            if positions:
-                target_positions = np.array(positions)
-                target_rcs = np.array(rcs_values)
-
-                # Generate SAR raw data and process
-                raw_data = sar.generate_sar_raw_data(target_positions, target_rcs)
-                sar_image = sar.range_doppler_algorithm(raw_data)
-                quality = sar.calculate_image_quality(sar_image)
-
-                # Display in viewer
-                self.sar_viewer.update_image(sar_image, quality)
-                self.status_bar.showMessage(
-                    f"SAR Image generated | SNR: {quality.get('SNR_dB', 0):.1f} dB"
-                )
-            else:
-                # Generate demo image
-                self.sar_viewer._generate_demo_image()
-                self.status_bar.showMessage("SAR Demo Image generated")
-
-        except ImportError as e:
-            print(f"[SAR] Advanced module not available: {e}")
-            # Generate demo image as fallback
-            self.sar_viewer._generate_demo_image()
-            self.status_bar.showMessage(
-                "SAR Demo Image generated (advanced module unavailable)"
-            )
-        except Exception as e:
-            print(f"[SAR] Error generating image: {e}")
-            self.sar_viewer._generate_demo_image()
-            self.status_bar.showMessage("SAR Demo Image generated")
-
-        # Show the viewer
-        self.sar_viewer.show()
-        self.sar_viewer.raise_()
-
-    # Clutter, MTI, and ECCM handlers
-
-    def _on_clutter_toggled(self, checked: bool) -> None:
-        """Handle Clutter toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_clutter_mode"):
-            self.sim_thread.set_clutter_mode(checked)
-
-        status = "ACTIVE" if checked else "OFF"
-        self.status_bar.showMessage(f"CLUTTER: {status}")
-
-    def _on_mti_toggled(self, checked: bool) -> None:
-        """Handle MTI Filter toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_mti_mode"):
-            self.sim_thread.set_mti_mode(checked)
-
-        status = "ACTIVE (filtering slow targets)" if checked else "OFF"
-        self.status_bar.showMessage(f"MTI FILTER: {status}")
-
-    def _on_eccm_toggled(self, checked: bool) -> None:
-        """Handle ECCM Frequency Agility toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_eccm_agility"):
-            self.sim_thread.set_eccm_agility(checked)
-
-        status = "ACTIVE (frequency hopping)" if checked else "OFF"
-        self.status_bar.showMessage(f"ECCM: {status}")
-
-    def _on_monopulse_toggled(self, checked: bool) -> None:
-        """Handle Monopulse Tracking toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_monopulse_mode"):
-            self.sim_thread.set_monopulse_mode(checked)
-
-        status = "ACTIVE (precision angle tracking)" if checked else "OFF"
-        self.status_bar.showMessage(f"MONOPULSE: {status}")
-
-    # Pulse-Doppler handlers
-
-    def _on_pulse_doppler_toggled(self, checked: bool) -> None:
-        """Handle Pulse-Doppler Processing toggle."""
-        mti_order = (
-            1
-            if hasattr(self, "pd_mti_action") and self.pd_mti_action.isChecked()
-            else 0
-        )
-        if self.sim_thread and hasattr(self.sim_thread, "set_pulse_doppler_mode"):
-            self.sim_thread.set_pulse_doppler_mode(
-                enabled=checked, n_pulses=64, prf_hz=1000.0, mti_order=mti_order
-            )
-
-        status = "ACTIVE [CPI→MF→FFT]" if checked else "OFF → Parametric mode"
-        self.status_bar.showMessage(f"PULSE-DOPPLER: {status}")
-
-    def _on_pd_mti_toggled(self, checked: bool) -> None:
-        """Handle MTI Canceller toggle within Pulse-Doppler mode."""
-        mti_order = 1 if checked else 0
-        pd_enabled = hasattr(self, "pd_action") and self.pd_action.isChecked()
-        if (
-            pd_enabled
-            and self.sim_thread
-            and hasattr(self.sim_thread, "set_pulse_doppler_mode")
-        ):
-            self.sim_thread.set_pulse_doppler_mode(
-                enabled=True, n_pulses=64, prf_hz=1000.0, mti_order=mti_order
-            )
-
-        status = "MTI 2-Pulse ACTIVE (clutter suppression)" if checked else "MTI OFF"
-        self.status_bar.showMessage(f"PULSE-DOPPLER: {status}")
-
-    # EKF handler
-
-    def _on_ekf_toggled(self, checked: bool) -> None:
-        """Handle EKF tracking toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_ekf_mode"):
-            self.sim_thread.set_ekf_mode(checked)
-
-        status = "EKF ACTIVE [r,θ] polar" if checked else "Linear KF [x,y] Cartesian"
-        self.status_bar.showMessage(f"TRACKING: {status}")
-
-    # Electronic-warfare handlers
-
-    def _on_jamming_toggled(self, checked: bool) -> None:
-        """Handle Jamming Environment toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_jamming_environment"):
-            self.sim_thread.set_jamming_environment(checked)
-
-        status = "🔴 JAMMING ACTIVE (J/S = 20 dB)" if checked else "CLEAR — No jamming"
-        self.status_bar.showMessage(f"EW: {status}")
-
-    def _on_freq_agility_toggled(self, checked: bool) -> None:
-        """Handle Frequency Agility toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_freq_agility"):
-            self.sim_thread.set_freq_agility(checked)
-
-        status = (
-            "📡 FREQ AGILITY ON (10 hops, -10 dB J/S)" if checked else "Fixed frequency"
-        )
-        self.status_bar.showMessage(f"ECCM: {status}")
-
-    def _on_prf_stagger_toggled(self, checked: bool) -> None:
-        """Handle PRF Stagger toggle."""
-        if self.sim_thread and hasattr(self.sim_thread, "set_prf_stagger"):
-            self.sim_thread.set_prf_stagger(checked)
-
-        status = "⚡ PRF STAGGER ON (±5% jitter)" if checked else "Fixed PRF"
-        self.status_bar.showMessage(f"ECCM: {status}")
-
-    # Scenario export
-
-    def _on_save_scenario(self) -> None:
-        """Save current simulation state to YAML."""
-        from PySide6.QtWidgets import QFileDialog, QInputDialog
-
-        from src.io.exporter import export_scenario_to_yaml
-
-        filepath, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Scenario",
-            str(self._get_scenarios_dir() / "custom_scenario.yaml"),
-            "YAML Files (*.yaml *.yml)",
-        )
-        if not filepath:
-            return
-
-        name, ok = QInputDialog.getText(
-            self, "Scenario Name", "Enter scenario name:", text="Custom Scenario"
-        )
-        if not ok:
-            return
-
-        def export(engine) -> bool:
-            return export_scenario_to_yaml(engine, filepath, scenario_name=name)
-
-        try:
-            if self.sim_thread is not None:
-                success = self.sim_thread.call_sync(export)
-            else:
-                success = export(self.engine)
-        except Exception as exc:
-            logger.exception("Scenario export failed")
-            QMessageBox.critical(self, "Save Scenario", f"Could not save scenario:\n{exc}")
-            return
-
-        if success:
-            self.status_bar.showMessage(f"Scenario saved: {filepath}")
+            self.controller.reload()
+
+    def _toggle_record(self, on: bool) -> None:
+        if on:
+            self.controller.start_recording()
         else:
-            QMessageBox.critical(
-                self, "Save Scenario", f"Could not save scenario to:\n{filepath}"
-            )
+            self.controller.stop_recording()
 
-    # Keyboard shortcuts
+    # --------------------------------------------------------------- editor
+
+    def _toggle_editor(self, on: bool) -> None:
+        self.editing = on
+        self.inspector.set_editing(on)
+        self.editor_badge.setVisible(on)
+        self.add_object_button.setVisible(on)
+        if on:
+            self.controller.begin_editing()
+            self.tabs.setCurrentIndex(0)
+            self.header.set_mode("edit")
+            self.toasts.show(tr("Editing the scenario's start. Place objects on the PPI, then save."), "info")
+        else:
+            self.add_object_button.setChecked(False)
+            self._on_mode("paused")
+
+    def _place_mode(self, on: bool) -> None:
+        self.views["ppi"].interaction = "place" if on else "select"
+        self.views["ppi"].setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
+
+    def _place_object(self, x_m: float, y_m: float) -> None:
+        target_id = self.controller.add_object(x_m, y_m)
+        self.add_object_button.setChecked(False)
+        self._select(target_id)
+
+    def _delete_object(self, target_id: int) -> None:
+        self.controller.remove_object(target_id)
+        self._select(None)
+
+    # ----------------------------------------------------------------- files
+
+    def _new_scenario(self) -> None:
+        self.controller.new_scenario()
+        if not self.editing:
+            self.editor_action.trigger()
+
+    def _open_scenario(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Open scenario"), str(scenarios_dir()), tr("Scenarios (*.yaml *.yml *.json)")
+        )
+        if path:
+            self.controller.load_scenario(path)
+
+    def _save_scenario(self) -> None:
+        start = self.controller.scenario_path or str(scenarios_dir() / "scenario.yaml")
+        path, _ = QFileDialog.getSaveFileName(self, tr("Save scenario"), str(Path(start).with_suffix(".yaml")),
+                                              tr("YAML scenario (*.yaml)"))
+        if not path:
+            return
+        name, ok = QInputDialog.getText(self, tr("Scenario name"), tr("Name"),
+                                        text=self.controller.config.name if self.controller.config else "")
+        if ok:
+            self.controller.export_scenario(path, name)
+
+    def _export_report(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, tr("Export report"), str(Path.home() / "radarsim_report.csv"),
+                                              tr("CSV (*.csv);;JSON (*.json)"))
+        if path:
+            self.controller.export_report(path)
+
+    def _open_recording(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, tr("Open recording"), str(self.controller.output_dir),
+                                              tr("Recordings (*.h5)"))
+        if path:
+            self.controller.open_replay(path)
+
+    # --------------------------------------------------------------- dialogs
+
+    def _dialog(self, title: str, rows) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(SPACE.xl, SPACE.lg, SPACE.xl, SPACE.lg)
+        for left, right in rows:
+            row = QHBoxLayout()
+            label = QLabel(left)
+            label.setProperty("role", "value" if right else "title")
+            row.addWidget(label)
+            row.addStretch()
+            if right:
+                row.addWidget(caption(right))
+            layout.addLayout(row)
+        close = QPushButton(tr("Close"))
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        dialog.exec()
+
+    def _show_shortcuts(self) -> None:
+        self._dialog(tr("Keyboard shortcuts"), [
+            ("Space", tr("Play / pause")), (".", tr("Single step while paused")),
+            ("R", tr("Restart scenario")), ("1 … 6", tr("Switch scope")),
+            ("+ / −  ·  wheel", tr("Range scale")), ("F", tr("Fit all objects")),
+            ("T", tr("Ground truth on/off")), ("Ctrl+J", tr("Event drawer")),
+            ("Ctrl+O / Ctrl+S", tr("Open / save scenario")), ("Ctrl+E", tr("Export report")),
+            ("Ctrl+R", tr("Record session")), ("Ctrl+Shift+E", tr("Scenario editor")),
+            ("Esc", tr("Clear selection")), ("F11", tr("Full screen")),
+        ])
+
+    def _show_about(self) -> None:
+        self._dialog(tr("About RadarSim"), [
+            (f"RadarSim {APP_VERSION}", ""),
+            (tr("Physics-based radar simulation and analysis"), ""),
+            ("Mehmet Gümüş", tr("Author")),
+            ("MIT", tr("Licence")),
+            ("IBM Plex", tr("Typeface (SIL OFL 1.1)")),
+        ])
+
+    # ---------------------------------------------------------------- window
 
     def keyPressEvent(self, event) -> None:
-        """Handle global keyboard shortcuts."""
-        key = event.key()
+        if event.key() == Qt.Key.Key_Escape:
+            self._select(None)
+        elif event.key() == Qt.Key.Key_F11:
+            self.showNormal() if self.isFullScreen() else self.showFullScreen()
+        else:
+            super().keyPressEvent(event)
 
-        # Space - Play/Pause toggle
-        if key == Qt.Key.Key_Space and not event.modifiers():
-            self._toggle_pause()
-            return
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "toasts"):
+            self.toasts.relayout()
 
-        # R - Restart the current scenario
-        if key == Qt.Key.Key_R and not event.modifiers():
-            self._on_reset()
-            return
-
-        # 1-4 - Tab switching
-        if key == Qt.Key.Key_1 and not event.modifiers():
-            self.display_tabs.setCurrentIndex(0)  # PPI
-            return
-        if key == Qt.Key.Key_2 and not event.modifiers():
-            self.display_tabs.setCurrentIndex(1)  # RHI
-            return
-        if key == Qt.Key.Key_3 and not event.modifiers():
-            self.display_tabs.setCurrentIndex(2)  # 3D Tactical
-            return
-        if key == Qt.Key.Key_4 and not event.modifiers():
-            if self.display_tabs.count() > 3:
-                self.display_tabs.setCurrentIndex(3)
-            return
-
-        # F11 - Toggle Fullscreen
-        if key == Qt.Key.Key_F11:
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.showFullScreen()
-            return
-
-        # Default handler
-        super().keyPressEvent(event)
+    def _restore_layout(self) -> None:
+        for key, widget in (("window/geometry", self), ("window/body", self.body), ("window/vertical", self.vertical)):
+            value = self.settings.value(key)
+            if isinstance(value, QByteArray):
+                (widget.restoreGeometry if widget is self else widget.restoreState)(value)
+        if not self.settings.value("window/vertical"):
+            self.vertical.setSizes([700, 0])
 
     def closeEvent(self, event) -> None:
-        """Handle window close."""
-        # Auto-save recording if active
-        if self.is_recording:
-            filepath = self.recorder.stop_recording()
-            if filepath:
-                print(f"[RECORDING] Auto-saved on exit: {filepath}")
-
-        self._save_settings()
-        self._stop_simulation()
-        if self.replay_loader:
-            self.replay_loader.close()
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/body", self.body.saveState())
+        self.settings.setValue("window/vertical", self.vertical.saveState())
+        self._timer.stop()
+        self.controller.shutdown()
         event.accept()
+
+
+def ensure_application(argv=None) -> QApplication:
+    """Create (or reuse) the QApplication with fonts, theme and language."""
+    from .i18n import set_language
+    from .theme import palette
+    from .theme.fonts import load_fonts, ui_font
+    from .theme.qss import build_stylesheet
+
+    app = QApplication.instance() or QApplication(argv or [sys.argv[0]])
+    app.setApplicationName("RadarSim")
+    app.setOrganizationName("RadarSim")
+    app.setApplicationVersion(APP_VERSION)
+    app.setStyle("Fusion")
+    # Numbers use the decimal point everywhere, whatever the system locale.
+    QLocale.setDefault(QLocale.c())
+    load_fonts()
+    app.setFont(ui_font())
+    from PySide6.QtGui import QIcon
+
+    from .theme import ASSETS
+
+    app.setWindowIcon(QIcon(str(ASSETS / "radarsim.png")))
+    app.setStyleSheet(build_stylesheet(palette()))
+    set_language(QSettings("RadarSim", "RadarSim").value("view/language", "en"))
+    return app
