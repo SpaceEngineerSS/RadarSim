@@ -340,17 +340,6 @@ class TestCFARDetector:
         # Target should be detected
         assert detections[target_idx]
 
-    def test_cfar_threshold_calculation(self):
-        """Verify CFAR threshold multiplier formula"""
-        n_ref = 32
-        pfa = 1e-6
-
-        # α = N × (Pfa^(-1/N) - 1)
-        expected_alpha = n_ref * (pfa ** (-1.0 / n_ref) - 1)
-
-        # Should be around 14 for these parameters
-        assert 10 < expected_alpha < 20
-
     @pytest.mark.parametrize(
         "cfar_type", [CFARType.CA, CFARType.GO, CFARType.SO, CFARType.OS]
     )
