@@ -3,15 +3,15 @@ from math import erfc
 import numpy as np
 import pytest
 
-from src.physics.ecm import (
+from radarsim.physics.ecm import (
     DRFMConfig,
     DRFMJammer,
     ECMSimulator,
     apply_receiver_hard_limiter,
 )
-from src.physics.rcs import SwerlingModel
-from src.simulation.engine import SimulationEngine
-from src.simulation.objects import Radar, Target
+from radarsim.physics.rcs import SwerlingModel
+from radarsim.simulation.engine import SimulationEngine
+from radarsim.simulation.objects import Radar, Target
 
 
 def calculate_jsr(range_m, **kwargs):

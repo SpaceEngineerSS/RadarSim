@@ -26,9 +26,9 @@ import time
 import numpy as np
 import pytest
 
-import src.simulation.network_manager as network_manager
-from src.physics.geometry import azimuth_from_enu
-from src.simulation.network_manager import (
+import radarsim.simulation.network_manager as network_manager
+from radarsim.physics.geometry import azimuth_from_enu
+from radarsim.simulation.network_manager import (
     CovarianceIntersection,
     LatencyModel,
     NetworkManager,

@@ -2,9 +2,9 @@
 
 import pytest
 
-from src.physics.metrics import calculate_pd_swerling
-from src.simulation.headless_runner import HeadlessRunner, SimulationConfig
-from src.simulation.scenario_generator import ParameterSpace, ScenarioGenerator
+from radarsim.physics.metrics import calculate_pd_swerling
+from radarsim.simulation.headless_runner import HeadlessRunner, SimulationConfig
+from radarsim.simulation.scenario_generator import ParameterSpace, ScenarioGenerator
 
 
 def test_empirical_pd_matches_swerling_theory():

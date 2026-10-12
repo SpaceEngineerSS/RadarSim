@@ -1,0 +1,74 @@
+# Close Air Combat
+#
+# Purpose: AESA sector scan against two manoeuvring fighters that try to leave
+#          the scan volume.
+# Geometry (ENU: x East, y North, z Up; azimuth clockwise from North):
+#   Own-ship flies North at 8 km. The radar rasters +/-60 deg about North at
+#   120 deg/s. Bandit 1 starts at about +22 deg and breaks right at a constant
+#   9 deg/s (about 4.7 g at 250 m/s); Bandit 2 starts at about -31 deg and
+#   drifts out of the sector to the West.
+# Reference: AN/APG-77 / AN/APG-81 class parameters (open literature)
+
+scenario:
+  name: "Close Air Combat"
+  description: "Fighter AESA sector scan against two manoeuvring bandits"
+  duration_seconds: 90
+  update_rate_hz: 30
+
+radar:
+  name: "Fighter AESA"
+  type: "aesa"
+  frequency_hz: 10.0e9
+  power_watts: 20000
+  prf_hz: 10000
+  pulse_width_s: 5.0e-6
+  antenna:
+    gain_db: 42
+    beamwidth_az_deg: 1.2
+    beamwidth_el_deg: 1.2
+    sidelobe_db: -35
+    scan_type: "sector"
+    sector_az_min_deg: -60
+    sector_az_max_deg: 60
+    scan_speed_deg_s: 120
+  receiver:
+    noise_figure_db: 3.5
+    bandwidth_hz: 10.0e6
+  position: {x_m: 0, y_m: 0, z_m: 8000}
+  velocity: {vx_mps: 0, vy_mps: 250, vz_mps: 0}
+
+targets:
+  - name: "Bandit 1"
+    affiliation: "hostile"
+    type: "fighter"
+    rcs_m2: 0.5
+    swerling_model: 1
+    initial_position: {x_m: 12000, y_m: 30000, z_m: 9000}
+    velocity: {vx_mps: 150, vy_mps: -250, vz_mps: -20}
+    turn_rate_deg_s: 9.0
+    has_ecm: true
+    ecm_type: "drfm"
+    ecm_power_watts: 200
+
+  - name: "Bandit 2"
+    affiliation: "hostile"
+    type: "fighter"
+    rcs_m2: 0.5
+    swerling_model: 1
+    initial_position: {x_m: -15000, y_m: 25000, z_m: 7500}
+    velocity: {vx_mps: -200, vy_mps: -200, vz_mps: 30}
+    has_ecm: true
+    ecm_type: "noise_spot"
+    ecm_power_watts: 150
+
+environment:
+  temperature_c: -30
+  pressure_hpa: 350
+  water_vapor_gpm3: 1.0
+
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: false
+  pfa: 1.0e-6
+  tracker:
+    process_noise_mps2: 40  # follows the 4.7 g break turn without losing the track

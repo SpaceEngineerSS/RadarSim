@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.physics.clutter import ClutterModel
+from radarsim.physics.clutter import ClutterModel
 
 
 def test_constant_gamma_ground_reflectivity_uses_sine_grazing_law():

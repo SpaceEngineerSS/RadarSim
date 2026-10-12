@@ -2,11 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from src.io.exporter import export_scenario_to_yaml
-from src.io.scenario_loader import ScenarioLoader
+from radarsim.io.exporter import export_scenario_to_yaml
+from radarsim.io.scenario_loader import ScenarioLoader
 
-
-SCENARIOS = Path(__file__).parents[1] / "scenarios"
+SCENARIOS = Path(__file__).parents[1] / "radarsim" / "scenarios"
 
 
 def test_f16_scenario_parameters_reach_engine():

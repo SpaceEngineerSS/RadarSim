@@ -2,7 +2,7 @@
 
 ## Supported releases
 
-Security fixes are provided for the latest major release. Version 3.x is currently supported; older releases should be upgraded before reporting a version-specific issue.
+Security fixes are provided for the latest major release. Version 4.x is currently supported; older releases should be upgraded before reporting a version-specific issue.
 
 ## Reporting a vulnerability
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.constants import c
 
-from src.advanced.sar_isar import (
+from radarsim.signal.sar_isar import (
     AdvancedSARISAR,
     ISARProcessor,
     SARImageResult,

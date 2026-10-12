@@ -18,17 +18,12 @@ References:
     - Rohling (1983). "Radar CFAR Thresholding", IEEE Trans. AES
 """
 
-import os
-import sys
 
 import numpy as np
 import pytest
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.signal.cfar import CFARDetector, CFARType
-from src.signal.waveforms import (
+from radarsim.signal.cfar import CFARDetector, CFARType
+from radarsim.signal.waveforms import (
     BARKER_CODES,
     RadarWaveforms,
     validate_barker13_psl,

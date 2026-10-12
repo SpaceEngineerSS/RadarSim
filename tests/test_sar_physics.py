@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.constants import c
 
-from src.advanced.sar_isar import AdvancedSARISAR, ISARProcessor, rda_vectorized
+from radarsim.signal.sar_isar import AdvancedSARISAR, ISARProcessor, rda_vectorized
 
 
 def test_stripmap_raw_data_contains_delayed_lfm_phase_history() -> None:

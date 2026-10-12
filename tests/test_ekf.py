@@ -20,8 +20,8 @@ References:
 import numpy as np
 import pytest
 
-from src.tracking.ekf import ExtendedKalmanFilter
-from src.tracking.kalman import LinearKalmanFilter
+from radarsim.tracking.ekf import ExtendedKalmanFilter
+from radarsim.tracking.kalman import LinearKalmanFilter
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
@@ -154,7 +154,7 @@ class TestStraightLineTracking:
         initial_trace = np.trace(state.P)
 
         rng = np.random.default_rng(42)
-        for k in range(10):
+        for _ in range(10):
             state = ekf.predict(state, dt=1.0)
             r = np.sqrt(state.x[0] ** 2 + state.x[1] ** 2)
             theta = np.arctan2(state.x[1], state.x[0])

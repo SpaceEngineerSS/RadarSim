@@ -11,9 +11,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from src.io.scenario_loader import ScenarioLoader  # noqa: E402
-from src.simulation.frame import FrameState  # noqa: E402
-from src.ui.thread_manager import SimulationThread  # noqa: E402
+from radarsim.io.scenario_loader import ScenarioLoader  # noqa: E402
+from radarsim.simulation.frame import FrameState  # noqa: E402
+from radarsim.ui.thread_manager import SimulationThread  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -33,7 +33,7 @@ def _wait(app, condition, timeout=5.0):
 
 @pytest.fixture
 def running(application):
-    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    engine = ScenarioLoader("radarsim/scenarios/basic_tracking.json").create_simulation_engine()
     thread = SimulationThread(engine)
     frames = []
     thread.frame_ready.connect(frames.append)
@@ -104,7 +104,7 @@ def test_step_error_pauses_and_reports(application, running):
 
 
 def test_commands_apply_immediately_when_not_running(application):
-    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    engine = ScenarioLoader("radarsim/scenarios/basic_tracking.json").create_simulation_engine()
     thread = SimulationThread(engine)
     thread.submit(lambda e: setattr(e.radar, "prf_hz", 2500.0))
     assert engine.radar.prf_hz == 2500.0

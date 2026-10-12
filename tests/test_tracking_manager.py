@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from src.simulation.objects import Radar
-from src.tracking.tracker import Track, TrackManager, TrackStatus
+from radarsim.simulation.objects import Radar
+from radarsim.tracking.tracker import Track, TrackManager, TrackStatus
 
 
 def make_track(manager, track_id, position, position_variance):

@@ -10,11 +10,11 @@ reproducibility (seed + reset).
 import numpy as np
 import pytest
 
-from src.physics.clutter import ClutterModel
-from src.physics.rcs import SwerlingModel
-from src.simulation.engine import SimulationEngine
-from src.simulation.objects import MotionModel, Radar, Target
-from src.tracking.tracker import TrackStatus
+from radarsim.physics.clutter import ClutterModel
+from radarsim.physics.rcs import SwerlingModel
+from radarsim.simulation.engine import SimulationEngine
+from radarsim.simulation.objects import MotionModel, Radar, Target
+from radarsim.tracking.tracker import TrackStatus
 
 
 def _radar(**kwargs) -> Radar:
@@ -238,7 +238,7 @@ def test_reset_reproduces_the_same_run():
 
 
 def test_monopulse_error_signal_is_linear_near_boresight_and_saturates():
-    from src.tracking.monopulse import MonopulseEstimator
+    from radarsim.tracking.monopulse import MonopulseEstimator
 
     est = MonopulseEstimator(beamwidth_deg=2.0, monopulse_slope=1.6)
     small = np.radians(0.05)
@@ -255,7 +255,7 @@ def test_monopulse_error_signal_is_linear_near_boresight_and_saturates():
 
 
 def test_monopulse_angle_error_shrinks_with_snr():
-    from src.tracking.monopulse import MonopulseEstimator
+    from radarsim.tracking.monopulse import MonopulseEstimator
 
     est = MonopulseEstimator(beamwidth_deg=1.5)
     rng = np.random.default_rng(0)

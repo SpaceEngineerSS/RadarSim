@@ -1,79 +1,59 @@
-# -*- mode: python ; coding: utf-8 -*-
+# PyInstaller build for the RadarSim desktop application.
+#
+#   pip install -e ".[gui,build]"
+#   pyinstaller --noconfirm --clean RadarSim.spec
+#
+# One-folder build: it starts faster than a one-file build, which has to
+# unpack itself to a temporary folder on every launch.
 
-import os
+import sys
 
-block_cipher = None
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-datas = []
+datas = collect_data_files("radarsim")  # scenarios, fonts, icons, translations
 
-# Package the built-in scenarios with the desktop application.
-project_assets = ['scenarios']
-for asset in project_assets:
-    if os.path.exists(asset):
-        datas.append((asset, asset))
+hiddenimports = collect_submodules("radarsim") + [
+    "pyqtgraph.opengl",
+    "OpenGL.platform.win32",
+    "OpenGL.platform.glx",
+    "OpenGL.platform.darwin",
+]
 
-# Add src files manually to be absolutely sure, although Analysis usually does this
-# But here we only add non-python files if they ever exist. 
-# Based on find_by_name, there are none currently.
+# Large modules the application never imports.
+excludes = [
+    "tkinter", "matplotlib", "IPython", "jupyter", "notebook", "pytest", "sphinx",
+    "docutils", "PyQt5", "PyQt6", "PySide2",
+    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
+    "PySide6.Qt3DCore", "PySide6.Qt3DRender", "PySide6.QtMultimedia", "PySide6.QtQuick",
+    "PySide6.QtQml", "PySide6.QtCharts", "PySide6.QtDataVisualization", "PySide6.QtPdf",
+    "PySide6.QtBluetooth", "PySide6.QtPositioning", "PySide6.QtSensors", "PySide6.QtSql",
+]
 
 a = Analysis(
-    ['run_gui.py'],
-    pathex=[],
-    binaries=[],
+    ["run_gui.py"],
     datas=datas,
-    hiddenimports=[
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'pyqtgraph',
-        'pyqtgraph.opengl',
-        'OpenGL',
-        'numpy',
-        'scipy',
-        'yaml',
-        'matplotlib',
-        'numba',
-        'h5py',
-        'src',
-    ],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    hiddenimports=hiddenimports,
+    excludes=excludes,
     noarchive=False,
 )
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,
-    name='RadarSim',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
+    name="RadarSim",
     console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=['resources/icon.ico'] if os.path.exists('resources/icon.ico') else None,
+    icon="radarsim/ui/assets/radarsim.ico",
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='RadarSim',
-)
+coll = COLLECT(exe, a.binaries, a.datas, name="RadarSim")
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="RadarSim.app",
+        icon="radarsim/ui/assets/radarsim.png",
+        bundle_identifier="io.github.spaceengineerss.radarsim",
+    )

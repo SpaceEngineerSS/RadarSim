@@ -4,7 +4,7 @@ List interface strings that have no translation yet.
     python tools/i18n_check.py tr          # missing Turkish entries
     python tools/i18n_check.py tr --write  # add them (English as placeholder)
 
-Strings are collected from ``tr("...")`` calls under src/ui plus the dynamic
+Strings are collected from ``tr("...")`` calls under radarsim/ui plus the dynamic
 keys listed below (event kinds, affiliations, ...).
 """
 
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOGS = ROOT / "src" / "ui" / "assets" / "i18n"
+CATALOGS = ROOT / "radarsim" / "ui" / "assets" / "i18n"
 
 DYNAMIC_KEYS = [
     "LIVE", "PAUSED", "REPLAY", "EDIT",
@@ -30,7 +30,7 @@ DYNAMIC_KEYS = [
 
 def interface_strings():
     found = set(DYNAMIC_KEYS)
-    for path in (ROOT / "src" / "ui").rglob("*.py"):
+    for path in (ROOT / "radarsim" / "ui").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (

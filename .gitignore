@@ -1,89 +1,35 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
+.venv/
+venv/
+.env
 
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
+# Build output
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+site/
 
-# PyInstaller
-*.manifest
-*.spec
-!RadarSim.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-docs/_build/
-.tox/
-.nox/
+# Tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.benchmarks/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
+htmlcov/
+.ipynb_checkpoints/
 
-# Translations
-*.mo
-*.pot
+# Run output (recordings, exports, reports)
+output/
+recordings/
+*.h5
+*.log
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDEs
+# Editors and OS
 .idea/
 .vscode/
 *.swp
-*.swo
-*~
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# pyenv
-.python-version
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Simulation outputs
-simulation_data_*.json
-output/
-*.log
-
-# OS files
 .DS_Store
 Thumbs.db

@@ -1,0 +1,79 @@
+site_name: RadarSim
+site_description: Physics-based radar simulator with a desktop interface
+site_url: https://spaceengineerss.github.io/RadarSim/
+site_author: Mehmet Gümüş
+repo_url: https://github.com/SpaceEngineerSS/RadarSim
+repo_name: SpaceEngineerSS/RadarSim
+edit_uri: edit/main/docs/
+copyright: MIT licence · Mehmet Gümüş
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.highlight
+  icon:
+    repo: material/source-repository
+
+extra_css:
+  - stylesheets/radarsim.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Using RadarSim:
+      - The interface: interface.md
+      - Built-in scenarios: scenarios.md
+      - Writing scenarios: scenario-format.md
+      - Command line and Python: headless.md
+  - Models:
+      - Conventions: conventions.md
+      - Detection: models/detection.md
+      - Propagation and terrain: models/propagation.md
+      - Clutter and MTI: models/clutter.md
+      - Electronic attack: models/electronic-attack.md
+      - Tracking: models/tracking.md
+  - Validation: validation.md
+  - Development: development.md
+  - References: references.md
+  - Changelog: changelog.md

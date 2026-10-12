@@ -1,0 +1,70 @@
+# Mountain Ambush
+#
+# A ground radar sits 30 m above the terrain. A ridge of 2.5-3 km about 75 km
+# to the North-East (terrain preset "ambush") hides a low-flying aircraft that
+# runs West behind it at 1500 m; the radar first sees it when it clears the
+# northern end of the ridge, roughly 2.5 minutes in, where MTI lifts it out of
+# the mountain clutter. A high-altitude aircraft to the East is visible
+# throughout and serves as a reference.
+#
+# Heights are above mean sea level. Coordinates: ENU (x East, y North, z Up).
+
+scenario:
+  name: "Mountain Ambush"
+  description: "Low flyer masked by a mountain ridge; high-altitude reference in the clear"
+  duration_seconds: 180
+  update_rate_hz: 20
+
+radar:
+  name: "Ground surveillance radar"
+  frequency_hz: 3.0e9
+  power_watts: 500000
+  prf_hz: 1000
+  pulse_width_s: 1.0e-6
+  system_losses_db: 5.0
+  antenna:
+    gain_db: 35
+    beamwidth_az_deg: 2.0
+    beamwidth_el_deg: 3.0
+  receiver:
+    noise_figure_db: 4.0
+    bandwidth_hz: 1.0e6
+    full_scale_dbm: -20
+  position: {x_m: 0, y_m: 0, z_m: 0}
+  height_above_terrain_m: 30
+
+targets:
+  - name: "Low Flyer"
+    affiliation: "hostile"
+    type: "fighter"
+    rcs_m2: 5.0
+    swerling_model: 1
+    initial_position: {x_m: 72000, y_m: 82000, z_m: 1500}
+    velocity: {vx_mps: -250, vy_mps: 45, vz_mps: 0}
+
+  - name: "High Reference"
+    affiliation: "neutral"
+    type: "fighter"
+    rcs_m2: 8.0
+    swerling_model: 1
+    initial_position: {x_m: 80000, y_m: 30000, z_m: 8000}
+    velocity: {vx_mps: -150, vy_mps: 100, vz_mps: 0}
+
+environment:
+  temperature_c: 15
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 7.5
+  terrain_type: "mountain"
+  terrain:
+    preset: "ambush"
+
+simulation:
+  enable_atmospheric_loss: true
+  enable_clutter: true
+  pfa: 1.0e-6
+  pulses_integrated: 8
+  # Without MTI the mountain clutter (~28 dB) buries the low flyer once it
+  # clears the ridge; switch MTI off from the Advanced menu to see it.
+  mti:
+    enabled: true
+    threshold_mps: 5

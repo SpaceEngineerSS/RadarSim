@@ -23,34 +23,29 @@ References:
     - IEEE Std 686-2008: Standard Radar Definitions
 """
 
-import os
-import sys
 
 import numpy as np
 import pytest
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.physics.atmospheric import (
+from radarsim.physics.atmospheric import (
     validate_itu_60ghz,
     validate_itu_xband,
 )
-from src.physics.constants import (
+from radarsim.physics.constants import (
     BOLTZMANN_CONSTANT,
     PLANCK_CONSTANT,
     SPEED_OF_LIGHT,
     STANDARD_PRESSURE,
     STANDARD_TEMPERATURE,
 )
-from src.physics.radar_equation import (
+from radarsim.physics.radar_equation import (
     RadarParameters,
     calculate_doppler_shift,
     calculate_received_power,
     calculate_snr,
     validate_skolnik_example_2_1,
 )
-from src.physics.rcs import (
+from radarsim.physics.rcs import (
     SwerlingModel,
     SwerlingRCS,
     validate_swerling_distribution,

@@ -1,22 +1,21 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "radarsim"
-version = "3.0.1"
-description = "Physics-based radar simulation, signal processing, tracking, ECM, and radar imaging"
+version = "4.0.0"
+description = "Physics-based radar simulator: detection, clutter, jamming, tracking and analysis, with a desktop interface"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [
-    {name = "RadarSim Contributors"}
-]
-keywords = ["radar", "simulation", "tracking", "ecm", "eccm", "sar", "isar", "kalman-filter", "aerospace", "electronic-warfare"]
+authors = [{ name = "Mehmet Gümüş" }]
+keywords = ["radar", "simulation", "tracking", "electronic-warfare", "clutter", "kalman-filter", "aerospace", "education"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -25,77 +24,94 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 dependencies = [
-    "numpy>=1.23.0",
-    "scipy>=1.10.0",
-    "numba>=0.59.0",
-    "h5py>=3.9.0",
-    "PyYAML>=6.0.0",
+    "numpy>=1.23,<3",
+    "scipy>=1.10,<2",
+    "numba>=0.59",
+    "h5py>=3.9",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 gui = [
-    "PySide6>=6.6.0",
+    "PySide6>=6.6,<7",
     "pyqtgraph>=0.13.3",
-    "matplotlib>=3.7.0",
     "PyOpenGL>=3.1.7",
 ]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff==0.14.10",
-    "mypy>=1.0.0",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.14",
+    "mypy>=1.8",
+    "bandit>=1.7",
+    "matplotlib>=3.7",
 ]
 docs = [
-    "sphinx>=6.0.0",
-    "sphinx-rtd-theme>=1.2.0",
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.5,<10",
+    "matplotlib>=3.7",
 ]
+build = ["pyinstaller>=6.10"]
 all = ["radarsim[gui,dev,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/SpaceEngineerSS/RadarSim"
-Documentation = "https://github.com/SpaceEngineerSS/RadarSim#readme"
+Documentation = "https://spaceengineerss.github.io/RadarSim/"
 Repository = "https://github.com/SpaceEngineerSS/RadarSim"
 Issues = "https://github.com/SpaceEngineerSS/RadarSim/issues"
+Changelog = "https://github.com/SpaceEngineerSS/RadarSim/blob/main/CHANGELOG.md"
 
 [project.scripts]
-radarsim = "src.__main__:main"
+radarsim = "radarsim.__main__:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "gui*"]
+include = ["radarsim*"]
 
-[tool.black]
-line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.venv
-  | build
-  | dist
-)/
-'''
+[tool.setuptools.package-data]
+radarsim = [
+    "scenarios/*.yaml",
+    "scenarios/*.json",
+    "ui/assets/*.png",
+    "ui/assets/*.svg",
+    "ui/assets/*.ico",
+    "ui/assets/fonts/*",
+    "ui/assets/icons/*.svg",
+    "ui/assets/i18n/*.json",
+]
 
-[tool.isort]
-profile = "black"
-line_length = 100
-skip_gitignore = true
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+extend-exclude = ["build", "dist", "site"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501", "UP006", "UP007", "UP035", "B008", "SIM108"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "B017"]
 
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
 ignore_missing_imports = true
+warn_unused_configs = true
+no_implicit_optional = false
+check_untyped_defs = false
+exclude = ["build/", "dist/"]
+
+# The Qt interface is checked by its offscreen tests; PySide6 stubs disagree with
+# pyqtgraph's types in too many places for mypy to be useful there.
+[[tool.mypy.overrides]]
+module = ["radarsim.ui", "radarsim.ui.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
+addopts = "-q --tb=short"
+markers = ["slow: long-running tests (deselect with -m 'not slow')"]
 
+[tool.coverage.run]
+source = ["radarsim"]
+omit = ["radarsim/ui/*"]

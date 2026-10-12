@@ -3,13 +3,13 @@
 import numpy as np
 import pytest
 
-from src.io.scenario_loader import ScenarioLoader
-from src.simulation.analysis import coverage_curve, monte_carlo_pd, probe_engine, wilson_interval
+from radarsim.io.scenario_loader import ScenarioLoader
+from radarsim.simulation.analysis import coverage_curve, monte_carlo_pd, probe_engine, wilson_interval
 
 
 @pytest.fixture(scope="module")
 def probe():
-    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    engine = ScenarioLoader("radarsim/scenarios/basic_tracking.json").create_simulation_engine()
     return probe_engine(engine)
 
 
@@ -21,7 +21,7 @@ def test_coverage_pd_falls_with_range_and_crossings_are_ordered(probe):
 
 
 def test_coverage_scales_with_rcs_as_fourth_root():
-    engine = ScenarioLoader("scenarios/basic_tracking.json").create_simulation_engine()
+    engine = ScenarioLoader("radarsim/scenarios/basic_tracking.json").create_simulation_engine()
     probe = probe_engine(engine)
     probe.enable_atmospheric = False
     small = coverage_curve(probe, rcs_m2=1.0, swerling=0, max_range_m=200e3, points=400)

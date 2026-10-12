@@ -2,8 +2,7 @@ import math
 
 import pytest
 
-from src.physics.atmospheric import ITU_R_P676
-
+from radarsim.physics.atmospheric import ITU_R_P676
 
 ITU_VALIDATION_POINTS = (
     (12.0, 0.00869826406877357, 0.00953538822024593),

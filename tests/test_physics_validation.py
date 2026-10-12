@@ -11,16 +11,12 @@ References:
     - ITU-R P.676-12 (12/2017)
 """
 
-import os
-import sys
 
 import numpy as np
 import pytest
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.physics import (
+from radarsim.physics import (
     BOLTZMANN_CONSTANT,
     ITU_R_P676,
     SPEED_OF_LIGHT,

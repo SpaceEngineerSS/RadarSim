@@ -16,12 +16,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.io.scenario_loader import ScenarioLoader
-from src.physics.rcs import SwerlingModel
-from src.simulation.engine import SimulationEngine
-from src.simulation.objects import MotionModel, Radar, Target
+from radarsim.io.scenario_loader import ScenarioLoader
+from radarsim.physics.rcs import SwerlingModel
+from radarsim.simulation.engine import SimulationEngine
+from radarsim.simulation.objects import MotionModel, Radar, Target
 
-SCENARIOS = Path(__file__).parents[1] / "scenarios"
+SCENARIOS = Path(__file__).parents[1] / "radarsim" / "scenarios"
 
 
 
@@ -83,7 +83,7 @@ targets:
 
 
 def test_recorder_accepts_target_id_key(tmp_path):
-    from src.simulation.recorder import FlightRecorder
+    from radarsim.simulation.recorder import FlightRecorder
 
     recorder = FlightRecorder(output_dir=str(tmp_path))
     recorder.start_recording({"radar_frequency_hz": 10e9})
@@ -94,8 +94,8 @@ def test_recorder_accepts_target_id_key(tmp_path):
 
 
 def test_replay_accepts_non_integer_target_ids(tmp_path):
-    from src.io.replay_loader import ReplayLoader
-    from src.simulation.recorder import FlightRecorder
+    from radarsim.io.replay_loader import ReplayLoader
+    from radarsim.simulation.recorder import FlightRecorder
 
     recorder = FlightRecorder(output_dir=str(tmp_path))
     recorder.start_recording({"radar_frequency_hz": 10e9})
@@ -122,7 +122,7 @@ def test_beam_check_handles_azimuth_wrap():
 
 
 def test_sinc_pattern_is_half_power_at_half_beamwidth():
-    from src.signal.antenna_pattern import AntennaPattern
+    from radarsim.signal.antenna_pattern import AntennaPattern
 
     pattern = AntennaPattern(beamwidth_deg=2.0)
     gain = pattern.sinc_pattern(np.radians(1.0))
@@ -131,7 +131,7 @@ def test_sinc_pattern_is_half_power_at_half_beamwidth():
 
 def test_doppler_sign_convention_receding_is_negative():
     """Convention: fd = -2 vr / lambda with vr > 0 receding."""
-    from src.physics.radar_equation import RadarParameters, calculate_doppler_shift
+    from radarsim.physics.radar_equation import RadarParameters, calculate_doppler_shift
 
     radar = RadarParameters(frequency=10e9, power_transmitted=1e3, antenna_gain_tx=30.0)
     fd = calculate_doppler_shift(radar, np.array([10_000.0, 0, 0]), np.array([100.0, 0, 0]))
@@ -159,7 +159,7 @@ def test_coordinated_turn_target_moves():
 
 def test_mountain_peaks_block_line_of_sight():
     """The LOS raycast ignored TerrainConfig.mountain_peaks."""
-    from src.physics.terrain import TerrainConfig, TerrainMap
+    from radarsim.physics.terrain import TerrainConfig, TerrainMap
 
     flat = TerrainConfig(max_height=1.0)
     peaked = TerrainConfig(max_height=1.0, mountain_peaks=[(0.0, 10_000.0, 3_000.0)])

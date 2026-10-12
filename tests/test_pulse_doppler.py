@@ -20,8 +20,8 @@ Developed by Mehmet Gümüş (github.com/SpaceEngineerSS)
 import numpy as np
 import pytest
 
-from src.signal.antenna_pattern import AntennaPattern
-from src.signal.pulse_doppler import C_LIGHT, PulseDopplerProcessor
+from radarsim.signal.antenna_pattern import AntennaPattern
+from radarsim.signal.pulse_doppler import C_LIGHT, PulseDopplerProcessor
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST FIXTURES
@@ -502,8 +502,8 @@ class TestRangeDopplerMap:
 # ═══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    from src.signal.antenna_pattern import validate_antenna_patterns
-    from src.signal.pulse_doppler import validate_pulse_doppler
+    from radarsim.signal.antenna_pattern import validate_antenna_patterns
+    from radarsim.signal.pulse_doppler import validate_pulse_doppler
 
     print("=" * 60)
     print("PULSE-DOPPLER VALIDATION SUITE")

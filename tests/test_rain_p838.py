@@ -1,7 +1,6 @@
 import pytest
 
-from src.physics.rain import ITU_R_P838
-
+from radarsim.physics.rain import ITU_R_P838
 
 ITU_VALIDATION_POINTS = (
     (

@@ -15,21 +15,16 @@ References:
     - Skolnik (2008). "Radar Handbook", 3rd Ed.
 """
 
-import os
-import sys
 
 import numpy as np
 import pytest
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.simulation.engine import (
+from radarsim.simulation.engine import (
     SimulationEngine,
     validate_detection_logic,
     validate_linear_motion,
 )
-from src.simulation.objects import (
+from radarsim.simulation.objects import (
     KinematicState,
     MotionModel,
     Radar,

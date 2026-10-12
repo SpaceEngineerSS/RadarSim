@@ -13,9 +13,9 @@ pytest.importorskip("pyqtgraph")
 
 from PySide6.QtCore import QSettings  # noqa: E402
 
-from src.ui.main_window import MainWindow, ensure_application  # noqa: E402
+from radarsim.ui.main_window import MainWindow, ensure_application  # noqa: E402
 
-SCENARIOS = Path(__file__).parents[1] / "scenarios"
+SCENARIOS = Path(__file__).parents[1] / "radarsim" / "scenarios"
 
 
 @pytest.fixture(scope="module")

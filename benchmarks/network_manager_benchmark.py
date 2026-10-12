@@ -1,12 +1,13 @@
-import time
-import numpy as np
-import sys
 import os
+import sys
+import time
+
+import numpy as np
 
 # Add src to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.simulation.network_manager import NetworkManager, RadarNode, NetworkTrack
+from radarsim.simulation.network_manager import NetworkManager, NetworkTrack
 
 
 def run_benchmark():
@@ -28,7 +29,7 @@ def run_benchmark():
 
     # Generate random tracks for each node to simulate a busy environment
     # 20 tracks per node = 100 tracks total to associate
-    for i, nid in enumerate(node_ids):
+    for nid in node_ids:
         tracks = []
         for j in range(20):
             track = NetworkTrack(
