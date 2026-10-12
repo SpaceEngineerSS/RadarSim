@@ -4,15 +4,14 @@
 # Purpose: Test Doppler processing at extreme speeds (Mach 9+)
 # Challenge: Hypersonic Glide Vehicle at 3000 m/s causing Doppler aliasing
 #
-# Scientific Note: At Ka-Band (35 GHz):
-#   Doppler shift = 2 * v / λ = 2 * 3000 / 0.0086 = 700 kHz
-#   This may exceed PRF and cause velocity ambiguity
+# Scientific Note: At Ka-Band (35 GHz) the Doppler magnitude |fd| = 2|vr|/λ is
+#   2 * 3000 / 0.0086 = 700 kHz, far beyond the PRF, so the velocity is ambiguous.
 # Reference: Hypersonic threat analysis, MDA documents
 
 scenario:
   name: "Hypersonic Interception"
   description: "Mach 9 HGV testing Ka-Band missile seeker Doppler limits"
-  duration_seconds: 60
+  duration_seconds: 20
   update_rate_hz: 30
   required_radar_preset: "Missile Seeker (Ka-Band)"
 
@@ -28,6 +27,8 @@ radar:
     beamwidth_az_deg: 0.5
     beamwidth_el_deg: 0.5
     sidelobe_db: -30
+    scan_type: "stare"      # seeker locked on the target bearing (East)
+    stare_azimuth_deg: 90
   receiver:
     noise_figure_db: 5.0
     bandwidth_hz: 20.0e6  # Wide bandwidth for fast targets
@@ -56,7 +57,7 @@ targets:
 
 # Physics calculations for this scenario:
 #   λ = c/f = 3e8 / 35e9 = 0.00857 m (8.57 mm)
-#   Doppler = 2 * 2800 / 0.00857 = 653,000 Hz (653 kHz)
+#   |Doppler| = 2 * 2800 / 0.00857 = 653,000 Hz (653 kHz); closing, so fd > 0
 #   
 #   With PRF = 100 kHz:
 #     Unambiguous velocity = λ * PRF / 4 = 214 m/s
@@ -75,5 +76,3 @@ simulation:
   enable_atmospheric_loss: true
   enable_clutter: false
   pfa: 1.0e-5           # Higher false alarm acceptable for terminal phase
-  log_detections: true
-  log_doppler: true     # Critical for this test

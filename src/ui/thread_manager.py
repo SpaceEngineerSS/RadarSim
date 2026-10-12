@@ -183,7 +183,7 @@ class SimulationWorker(QObject):
     def _build_state_dict(self, results, dt: float) -> Dict[str, Any]:
         """Build the frame dictionary sent to the UI. Runs in the worker thread."""
         targets_data = []
-        for target in self.engine.targets:
+        for target in self.engine.active_targets:
             geom = self.engine.radar.calculate_target_geometry(
                 target.position, target.velocity
             )

@@ -51,7 +51,8 @@ def test_main_window_loads_scenarios(application) -> None:
     application.processEvents()
     assert loaded is True
     assert window.engine.radar.frequency_hz == pytest.approx(3.0e9)
-    assert len(window.engine.targets) == 2
+    # Two aircraft plus the MALD decoy and the chaff cloud they release
+    assert len(window.engine.targets) == 4
 
     window.close()
     application.processEvents()

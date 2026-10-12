@@ -8,16 +8,28 @@ import sys
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(description="RadarSim desktop application")
+    from src.cli import add_headless_arguments, run_headless
+
+    parser = argparse.ArgumentParser(description="RadarSim radar simulator")
     parser.add_argument(
         "scenario",
         nargs="?",
         default=None,
-        help="Optional path to scenario YAML or JSON file to run on startup",
+        help="scenario YAML or JSON file to load on startup",
     )
+    add_headless_arguments(parser)
     parsed_args, remaining_argv = parser.parse_known_args(
         sys.argv[1:] if argv is None else argv
     )
+    if parsed_args.headless:
+        if parsed_args.scenario is None:
+            parser.error("--headless needs a scenario file")
+        return run_headless(
+            parsed_args.scenario,
+            duration_s=parsed_args.duration,
+            seed=parsed_args.seed,
+            out_path=parsed_args.out,
+        )
 
     try:
         from PySide6.QtGui import QColor, QPalette

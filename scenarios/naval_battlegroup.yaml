@@ -116,14 +116,21 @@ targets:
       vz_mps: 0
     has_ecm: false
 
-# Clutter configuration (sea clutter)
-clutter:
-  sea_state: 4          # Moderate sea
-  sigma0_db: -25        # Sea clutter reflectivity
+# Sea surface: NRL sea-clutter model at Douglas sea state 4
+environment:
+  temperature_c: 20
+  pressure_hpa: 1013.25
+  water_vapor_gpm3: 12.0
+  terrain_type: "sea"
+  sea_state: 4
 
 # Simulation parameters
 simulation:
   enable_atmospheric_loss: true
   enable_clutter: true
   pfa: 1.0e-6
-  log_detections: true
+  # Two-pulse MTI: sea clutter (sigma_v ~ 1 m/s) is cancelled; the carrier
+  # (8 m/s) and the sea-skimmers closing at 280-900 m/s pass the notch.
+  mti:
+    enabled: true
+    threshold_mps: 5

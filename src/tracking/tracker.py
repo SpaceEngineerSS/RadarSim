@@ -191,6 +191,7 @@ class TrackManager:
         detection_data: Optional[List[Dict]] = None,
         in_coverage: Optional[CoveragePredicate] = None,
         revisit_guard_s: float = 0.0,
+        max_coast_time_s: Optional[float] = None,
     ) -> List[Track]:
         """
         Process new detections and update tracks.
@@ -215,6 +216,8 @@ class TrackManager:
             detection_data: Optional metadata for each detection
             in_coverage: Optional coverage predicate (see above)
             revisit_guard_s: Minimum time between two looks at the same track [s]
+            max_coast_time_s: Drop any track not updated for this long [s]
+                (covers tracks that leave the radar's coverage for good)
 
         Returns:
             List of active tracks
@@ -317,6 +320,11 @@ class TrackManager:
         for det_idx in unassigned_detections:
             measurement = detections[det_idx]
             self._create_track(measurement, detection_data, det_idx)
+
+        if max_coast_time_s is not None:
+            for track in self.tracks.values():
+                if current_time - track.last_update > max_coast_time_s:
+                    track.status = TrackStatus.DELETED
 
         # 6. Remove deleted tracks
         self.tracks = {

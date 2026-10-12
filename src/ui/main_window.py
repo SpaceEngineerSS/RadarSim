@@ -862,6 +862,22 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[ARCH] Error applying preset to scope: {e}")
 
+    def _select_preset_without_applying(self, preset_name) -> None:
+        """Show ``preset_name`` in the combo and switch display, keeping radar values."""
+        if not preset_name:
+            return
+        from src.physics.radar_equation import get_preset
+
+        combo = self.control_panel.arch_combo
+        index = combo.findText(preset_name)
+        preset = get_preset(preset_name)
+        if index < 0 or preset is None:
+            return
+        combo.blockSignals(True)
+        combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        self._switch_display(preset.display_type)
+
     def _switch_display(self, display_type) -> None:
         """
         Switch between PPI and B-Scope displays.
@@ -1004,13 +1020,9 @@ class MainWindow(QMainWindow):
             self.control_panel.update_from_radar(self.engine.radar)
 
             # Auto-switch radar preset if scenario specifies one
-            required_preset = loader.get_required_preset()
-            if required_preset:
-                # Find and set the preset in dropdown
-                index = self.control_panel.arch_combo.findText(required_preset)
-                if index >= 0:
-                    self.control_panel.arch_combo.setCurrentIndex(index)
-                    print(f"[SCENARIO] Auto-configured: {required_preset}")
+            # The preset only labels the scenario and picks the display; the
+            # scenario's own radar parameters are never overwritten.
+            self._select_preset_without_applying(loader.get_required_preset())
 
             # Start simulation with new scenario
             self._start_simulation()
@@ -1230,7 +1242,9 @@ class MainWindow(QMainWindow):
         preset_index = settings.value("radar/preset_index", 0, type=int)
         if hasattr(self, "control_panel") and self.control_panel:
             if preset_index < self.control_panel.arch_combo.count():
-                self.control_panel.arch_combo.setCurrentIndex(preset_index)
+                self._select_preset_without_applying(
+                    self.control_panel.arch_combo.itemText(preset_index)
+                )
 
         print("[SETTINGS] Loaded saved configuration")
 

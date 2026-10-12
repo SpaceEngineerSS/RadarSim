@@ -1,22 +1,23 @@
 {
   "scenario": {
     "name": "Basic Tracking",
-    "description": "Three generic targets for detection and track-lifecycle testing",
+    "description": "Three targets at 40 km for detection and track-lifecycle testing",
     "duration_seconds": 120,
     "update_rate_hz": 10
   },
   "radar": {
-    "name": "X-band tracking radar",
+    "name": "X-band surveillance radar",
     "frequency_hz": 10000000000.0,
-    "power_watts": 1000,
+    "power_watts": 200000,
     "prf_hz": 1000,
-    "pulse_width_s": 0.000001,
+    "pulse_width_s": 1e-06,
     "system_losses_db": 4.0,
     "antenna": {
-      "gain_db": 30,
+      "gain_db": 38,
       "beamwidth_az_deg": 1.7,
       "beamwidth_el_deg": 2.5,
-      "polarization_tilt_deg": 0
+      "polarization_tilt_deg": 0,
+      "scan_rate_rpm": 12
     },
     "receiver": {
       "noise_figure_db": 4.0,
@@ -24,7 +25,11 @@
       "system_temperature_k": 290,
       "full_scale_dbm": -20
     },
-    "position": {"x_m": 0, "y_m": 0, "z_m": 20}
+    "position": {
+      "x_m": 0,
+      "y_m": 0,
+      "z_m": 20
+    }
   },
   "environment": {
     "temperature_c": 15,
@@ -33,14 +38,24 @@
     "terrain_type": "rural",
     "sea_state": 0,
     "rain_rate_mm_hr": 0,
-    "ground_surface": {"model": "gamma"}
+    "ground_surface": {
+      "model": "gamma"
+    }
   },
   "targets": [
     {
       "name": "Target 1",
       "type": "aircraft",
-      "initial_position": {"x_m": 40000, "y_m": 10000, "z_m": 8000},
-      "velocity": {"vx_mps": -200, "vy_mps": -50, "vz_mps": -10},
+      "initial_position": {
+        "x_m": 40000,
+        "y_m": 10000,
+        "z_m": 8000
+      },
+      "velocity": {
+        "vx_mps": -200,
+        "vy_mps": -50,
+        "vz_mps": -10
+      },
       "rcs_m2": 15.0,
       "swerling_model": 1,
       "has_ecm": false
@@ -48,8 +63,16 @@
     {
       "name": "Target 2",
       "type": "fighter",
-      "initial_position": {"x_m": -30000, "y_m": 25000, "z_m": 5000},
-      "velocity": {"vx_mps": 180, "vy_mps": -120, "vz_mps": 5},
+      "initial_position": {
+        "x_m": -30000,
+        "y_m": 25000,
+        "z_m": 5000
+      },
+      "velocity": {
+        "vx_mps": 180,
+        "vy_mps": -120,
+        "vz_mps": 5
+      },
       "rcs_m2": 5.0,
       "swerling_model": 3,
       "has_ecm": false
@@ -57,8 +80,16 @@
     {
       "name": "Target 3",
       "type": "cruise_missile",
-      "initial_position": {"x_m": 35000, "y_m": -20000, "z_m": 100},
-      "velocity": {"vx_mps": -250, "vy_mps": 80, "vz_mps": 0},
+      "initial_position": {
+        "x_m": 35000,
+        "y_m": -20000,
+        "z_m": 100
+      },
+      "velocity": {
+        "vx_mps": -250,
+        "vy_mps": 80,
+        "vz_mps": 0
+      },
       "rcs_m2": 0.5,
       "swerling_model": 2,
       "has_ecm": false
@@ -67,7 +98,7 @@
   "simulation": {
     "enable_atmospheric_loss": true,
     "enable_clutter": false,
-    "pfa": 0.000001,
+    "pfa": 1e-06,
     "pulses_integrated": 8
   }
 }

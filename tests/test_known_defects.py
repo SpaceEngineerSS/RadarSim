@@ -7,6 +7,8 @@ not fixed yet are marked ``xfail(strict=True)`` with the phase that will fix the
 * the suite stays green while the defect exists, and
 * the moment a fix lands the test XPASSes, strict mode turns that into a failure,
   and the marker must be removed — the test then guards against regressions.
+
+All defects pinned here were fixed during the overhaul; the tests now guard them.
 """
 
 from pathlib import Path
@@ -21,7 +23,6 @@ from src.simulation.objects import MotionModel, Radar, Target
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 
-PHASE3 = "Phase 3: scenario support pending"
 
 
 def _engine(**kwargs) -> SimulationEngine:
@@ -203,14 +204,12 @@ def test_run_step_count_does_not_truncate():
 # =============================================================================
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE3)
 def test_naval_scenario_uses_sea_clutter():
     engine = ScenarioLoader(str(SCENARIOS / "naval_battlegroup.yaml")).create_simulation_engine()
     assert "sea" in engine.terrain_type.lower()
     assert engine.sea_state == 4
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE3)
 def test_scan_rate_is_read_from_scenario(tmp_path):
     path = _write(
         tmp_path,
@@ -226,7 +225,6 @@ radar:
     assert engine.radar.scan_rate_rpm == pytest.approx(15.0)
 
 
-@pytest.mark.xfail(strict=True, reason=PHASE3)
 def test_unknown_scenario_keys_are_reported(tmp_path):
     path = _write(
         tmp_path,
@@ -240,7 +238,6 @@ environment: {rain_rate_mmhr: 5}
     assert any("rain_rate_mmhr" in w for w in loader.warnings)
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError, reason=PHASE3)
 def test_empty_scenario_file_gives_clear_error(tmp_path):
     path = _write(tmp_path, "")
     with pytest.raises(ValueError, match="empty"):

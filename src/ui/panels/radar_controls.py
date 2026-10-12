@@ -343,6 +343,10 @@ class ControlPanel(QWidget):
         Args:
             radar: Radar object with frequency_hz and power_watts attributes
         """
+        # Display only: moving the sliders must not write rounded values back
+        # into the radar.
+        self.freq_slider.blockSignals(True)
+        self.power_slider.blockSignals(True)
         try:
             # Update frequency slider (convert Hz to GHz)
             freq_ghz = int(radar.frequency_hz / 1e9)
@@ -356,9 +360,9 @@ class ControlPanel(QWidget):
             self.power_slider.setValue(power_kw)
             self.power_label.setText(f"{power_kw} kW")
 
-            print(f"[CONTROLS] Synced: {freq_ghz} GHz, {power_kw} kW")
-        except Exception as e:
-            print(f"[CONTROLS] Sync failed: {e}")
+        finally:
+            self.freq_slider.blockSignals(False)
+            self.power_slider.blockSignals(False)
 
     def _on_arch_changed(self, preset_name: str) -> None:
         """Handle radar architecture preset change."""

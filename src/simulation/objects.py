@@ -19,7 +19,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numba
 import numpy as np
@@ -36,6 +36,14 @@ from src.physics.rcs import (
     SwerlingRCS,
     calculate_aspect_angle,
 )
+
+
+class ScanType(Enum):
+    """Antenna scan patterns."""
+
+    CIRCULAR = "circular"  # Continuous 360 deg mechanical rotation
+    SECTOR = "sector"  # Back-and-forth raster between two azimuth limits
+    STARE = "stare"  # Fixed pointing
 
 
 class MotionModel(Enum):
@@ -231,6 +239,9 @@ class Target:
         drfm_inherent_delay_s: float = 0.0,
         turn_rate_rad_s: float = 0.0,
         name: Optional[str] = None,
+        active_from_s: float = 0.0,
+        rcs_bloom_time_s: float = 0.0,
+        rcs_decay_time_s: float = 0.0,
     ):
         """
         Initialize target.
@@ -250,11 +261,20 @@ class Target:
             ecm_type: Jammer or deception technique identifier
             turn_rate_rad_s: Heading rate for COORDINATED_TURN, positive clockwise
             name: Display name (defaults to "<type> <id>")
+            active_from_s: Simulation time the object appears (deployment) [s]
+            rcs_bloom_time_s: RCS rise time constant after deployment (chaff) [s]
+            rcs_decay_time_s: RCS decay time constant after deployment (chaff) [s]
         """
         self.target_id = target_id
         self.target_type = target_type
         self.name = name if name else f"{target_type} {target_id}"
         self.turn_rate_rad_s = float(turn_rate_rad_s)
+        if active_from_s < 0.0 or rcs_bloom_time_s < 0.0 or rcs_decay_time_s < 0.0:
+            raise ValueError("deployment and RCS time constants cannot be negative")
+        self.active_from_s = float(active_from_s)
+        self.rcs_bloom_time_s = float(rcs_bloom_time_s)
+        self.rcs_decay_time_s = float(rcs_decay_time_s)
+        self.age_s = 0.0  # Time since deployment
         self.rcs_mean = rcs_m2
         self.swerling_model = swerling_model
         self.motion_model = motion_model
@@ -313,6 +333,7 @@ class Target:
         Args:
             dt: Time step [s]
         """
+        self.age_s += dt
         if self.motion_model == MotionModel.STATIC:
             # No motion
             pass
@@ -344,6 +365,25 @@ class Target:
         if len(self._position_history) > 1000:
             self._position_history.pop(0)
 
+    def is_active(self, time_s: float) -> bool:
+        """Whether the object has been deployed at ``time_s``."""
+        return time_s >= self.active_from_s
+
+    def rcs_time_factor(self) -> float:
+        """
+        Temporal RCS profile after deployment (1 when no profile is set).
+
+        Chaff: (1 - exp(-t/tau_bloom)) * exp(-t/tau_decay), the cloud blooming
+        as dipoles separate and decaying as it disperses and falls out.
+        Reference: Schleher (1999), Sec. 6.4.
+        """
+        factor = 1.0
+        if self.rcs_bloom_time_s > 0.0:
+            factor *= 1.0 - np.exp(-self.age_s / self.rcs_bloom_time_s)
+        if self.rcs_decay_time_s > 0.0:
+            factor *= np.exp(-self.age_s / self.rcs_decay_time_s)
+        return float(factor)
+
     def mean_rcs(self, radar_position: np.ndarray = None) -> float:
         """
         Aspect-dependent mean RCS seen from ``radar_position`` [m²].
@@ -351,7 +391,7 @@ class Target:
         The Swerling fluctuation is *not* applied here: the detection model integrates
         over the fluctuation statistics, so sampling it as well would count it twice.
         """
-        mean_rcs = self.rcs_mean
+        mean_rcs = self.rcs_mean * self.rcs_time_factor()
         if radar_position is not None and self.speed > 1e-3:
             aspect_angle = calculate_aspect_angle(
                 self.state.position, self.state.heading, radar_position
@@ -410,6 +450,9 @@ class Target:
             "swerling_model": self.swerling_model.name,
             "motion_model": self.motion_model.value,
             "turn_rate_rad_s": self.turn_rate_rad_s,
+            "active_from_s": self.active_from_s,
+            "rcs_bloom_time_s": self.rcs_bloom_time_s,
+            "rcs_decay_time_s": self.rcs_decay_time_s,
             "has_jammer": self.has_jammer,
             "jammer_active": self.jammer_active,
             "jammer_power_watts": self.jammer_power_watts,
@@ -452,6 +495,11 @@ class Radar:
         system_losses_db: float = 4.0,
         polarization_tilt_deg: float = 0.0,
         sidelobe_level_db: float = -30.0,
+        scan_type: ScanType = ScanType.CIRCULAR,
+        sector_az_min_deg: float = -60.0,
+        sector_az_max_deg: float = 60.0,
+        scan_speed_deg_s: Optional[float] = None,
+        stare_azimuth_deg: float = 0.0,
     ):
         """
         Initialize radar.
@@ -474,6 +522,10 @@ class Radar:
             system_losses_db: Combined transmit and receive losses [dB]
             polarization_tilt_deg: Polarization tilt relative to horizontal [degrees]
             sidelobe_level_db: One-way peak sidelobe level relative to the main beam [dB]
+            scan_type: Circular rotation, sector raster or stare
+            sector_az_min_deg, sector_az_max_deg: Sector limits, clockwise from North
+            scan_speed_deg_s: Sector scan speed (default: scan_rate_rpm * 6)
+            stare_azimuth_deg: Pointing direction in stare mode
         """
         positive_parameters = {
             "frequency_hz": frequency_hz,
@@ -499,6 +551,16 @@ class Radar:
             raise ValueError("noise_figure_db and system_losses_db cannot be negative")
         if sidelobe_level_db >= 0.0:
             raise ValueError("sidelobe_level_db must be negative")
+        scan_type = ScanType(scan_type)
+        if scan_rate_rpm < 0.0:
+            raise ValueError("scan_rate_rpm cannot be negative")
+        if scan_type == ScanType.SECTOR:
+            if not -180.0 <= sector_az_min_deg < sector_az_max_deg <= 180.0:
+                raise ValueError("sector limits must satisfy -180 <= min < max <= 180 deg")
+            if scan_speed_deg_s is None:
+                scan_speed_deg_s = scan_rate_rpm * 6.0
+            if scan_speed_deg_s <= 0.0:
+                raise ValueError("sector scan speed must be positive")
 
         self.radar_id = radar_id
         self.frequency_hz = frequency_hz
@@ -515,6 +577,11 @@ class Radar:
         self.system_losses_db = system_losses_db
         self.polarization_tilt_deg = polarization_tilt_deg
         self.sidelobe_level_db = sidelobe_level_db
+        self.scan_type = scan_type
+        self.sector_az_min_rad = np.radians(sector_az_min_deg)
+        self.sector_az_max_rad = np.radians(sector_az_max_deg)
+        self.scan_speed_deg_s = scan_speed_deg_s
+        self.stare_azimuth_rad = np.radians(stare_azimuth_deg)
 
         # Kinematic state
         if velocity is None:
@@ -526,9 +593,17 @@ class Radar:
         )
 
         # Antenna pointing, azimuth clockwise from North
-        self.antenna_azimuth = 0.0  # Current azimuth [rad]
-        self.previous_antenna_azimuth = 0.0  # Azimuth at the start of the last step
         self.antenna_elevation = 0.0  # Current elevation [rad]
+        self._sector_direction = 1.0
+        if scan_type == ScanType.SECTOR:
+            self.antenna_azimuth = self.sector_az_min_rad
+        elif scan_type == ScanType.STARE:
+            self.antenna_azimuth = self.stare_azimuth_rad
+        else:
+            self.antenna_azimuth = 0.0
+        self.previous_antenna_azimuth = self.antenna_azimuth
+        # Beam sweeps of the last update: (start azimuth, signed sweep angle) [rad]
+        self.swept_legs: List[Tuple[float, float]] = []
 
     def update(self, dt: float) -> None:
         """
@@ -544,10 +619,63 @@ class Radar:
             )
             self.state.position = new_pos
 
-        # Antenna rotation, clockwise from North (azimuth convention)
-        omega = self.scan_rate_rpm * 2 * np.pi / 60  # rad/s
         self.previous_antenna_azimuth = self.antenna_azimuth
-        self.antenna_azimuth = (self.antenna_azimuth + omega * dt) % (2 * np.pi)
+        if self.scan_type == ScanType.CIRCULAR:
+            sweep = self.scan_rate_rpm * 2 * np.pi / 60 * dt  # clockwise
+            self.swept_legs = [(self.antenna_azimuth, sweep)] if sweep > 0.0 else []
+            self.antenna_azimuth = (self.antenna_azimuth + sweep) % (2 * np.pi)
+        elif self.scan_type == ScanType.SECTOR:
+            self.swept_legs = self._advance_sector(np.radians(self.scan_speed_deg_s) * dt)
+        else:
+            self.swept_legs = []
+
+    def _advance_sector(self, sweep: float) -> List[Tuple[float, float]]:
+        """Move the beam along the sector raster, reversing at the limits."""
+        legs = []
+        angle = wrap_to_pi(self.antenna_azimuth)
+        while sweep > 1e-12:
+            limit = self.sector_az_max_rad if self._sector_direction > 0 else self.sector_az_min_rad
+            room = (limit - angle) * self._sector_direction
+            if room <= 1e-12:
+                self._sector_direction = -self._sector_direction
+                continue
+            step = min(room, sweep)
+            legs.append((angle, self._sector_direction * step))
+            angle += self._sector_direction * step
+            sweep -= step
+        self.antenna_azimuth = angle
+        return legs
+
+    @property
+    def revisit_period_s(self) -> float:
+        """Time between consecutive looks at a fixed azimuth (nominal) [s]."""
+        if self.scan_type == ScanType.CIRCULAR and self.scan_rate_rpm > 0.0:
+            return 60.0 / self.scan_rate_rpm
+        if self.scan_type == ScanType.SECTOR:
+            width_deg = np.degrees(self.sector_az_max_rad - self.sector_az_min_rad)
+            return 2.0 * width_deg / self.scan_speed_deg_s
+        return 0.0
+
+    def beam_swept(self, azimuth_rad: float) -> bool:
+        """
+        True if the beam centre crossed ``azimuth_rad`` during the last update.
+
+        Each azimuth is crossed once per circular revolution (twice per sector
+        cycle), giving one detection opportunity per pass. A staring or
+        non-rotating antenna looks at whatever lies inside its main lobe.
+        """
+        if not self.swept_legs:
+            return abs(wrap_to_pi(azimuth_rad - self.antenna_azimuth)) <= 0.5 * self.beamwidth_rad
+        for start, sweep in self.swept_legs:
+            if abs(sweep) >= 2.0 * np.pi:
+                return True
+            if sweep > 0.0:
+                offset = (azimuth_rad - start) % (2.0 * np.pi)
+            else:
+                offset = (start - azimuth_rad) % (2.0 * np.pi)
+            if 0.0 < offset <= abs(sweep):
+                return True
+        return False
 
     def calculate_target_geometry(
         self, target_position: np.ndarray, target_velocity: np.ndarray = None
@@ -629,6 +757,11 @@ class Radar:
             "system_losses_db": self.system_losses_db,
             "polarization_tilt_deg": self.polarization_tilt_deg,
             "sidelobe_level_db": self.sidelobe_level_db,
+            "scan_type": self.scan_type.value,
+            "sector_az_min_deg": float(np.degrees(self.sector_az_min_rad)),
+            "sector_az_max_deg": float(np.degrees(self.sector_az_max_rad)),
+            "scan_speed_deg_s": self.scan_speed_deg_s,
+            "stare_azimuth_deg": float(np.degrees(self.stare_azimuth_rad)),
         }
 
 
@@ -664,4 +797,6 @@ class SimulationState:
             self.radar.update(dt)
 
         for target in self.targets.values():
-            target.update(dt)
+            if target.is_active(self.time):
+                # Only the time since deployment counts in the deployment step.
+                target.update(min(dt, self.time - target.active_from_s))

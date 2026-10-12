@@ -460,22 +460,23 @@ def create_mountainous_terrain(seed: int = 42) -> TerrainMap:
 
 def create_ambush_terrain() -> TerrainMap:
     """
-    Create terrain for mountain ambush scenario.
+    Terrain for the mountain-ambush scenario.
 
-    High mountain range between radar and target spawn area.
+    Rolling procedural relief (up to 400 m) with a NW-SE ridge of three peaks
+    about 75 km North-East of the origin. The overlapping Gaussian peaks give
+    a ridge line of roughly 2.5-3 km that hides low-flying aircraft behind it.
     """
     config = TerrainConfig(
         seed=54321,
         scale=25000.0,
-        max_height=1500.0,
+        max_height=400.0,
         octaves=4,
         persistence=0.5,
         lacunarity=2.0,
-        # Add explicit mountain peaks for the ambush
         mountain_peaks=[
-            (50000.0, 60000.0, 2500.0),  # 2.5 km peak at 50km E, 60km N
-            (45000.0, 55000.0, 2000.0),  # 2 km peak
-            (55000.0, 65000.0, 2200.0),  # 2.2 km peak
+            (40000.0, 70000.0, 1200.0),
+            (50000.0, 60000.0, 1500.0),
+            (60000.0, 50000.0, 1200.0),
         ],
     )
     return TerrainMap(config)

@@ -158,3 +158,22 @@ def test_pause_and_speed_survive_scenario_reload(application):
     assert window.sim_thread.speed_factor == pytest.approx(3.0)
     window.close()
     application.processEvents()
+
+
+def test_scenario_radar_values_survive_preset_and_slider_sync(application):
+    """Loading must not round 0.45 GHz to 1 GHz or apply the preset's power."""
+    from pathlib import Path
+
+    from src.ui.main_window import MainWindow
+
+    scenarios = Path(__file__).parents[1] / "scenarios"
+    window = MainWindow()
+    window.show()
+    assert window.load_scenario(str(scenarios / "stealth_deep_penetration.yaml"))
+    application.processEvents()
+    radar = window.sim_thread.call_sync(lambda engine: engine.radar)
+    assert radar.frequency_hz == pytest.approx(0.45e9)
+    assert radar.power_watts == pytest.approx(400e3)
+    assert window.control_panel.arch_combo.currentText() == "Early Warning (UHF)"
+    window.close()
+    application.processEvents()
