@@ -139,7 +139,9 @@ class FlightRecorder:
 
             # Record target positions
             for target in state.get("targets", []):
-                target_id = target["id"]
+                target_id = target.get("id", target.get("target_id"))
+                if target_id is None:
+                    continue
 
                 if target_id not in self.session.target_tracks:
                     self.session.target_tracks[target_id] = {
@@ -225,7 +227,12 @@ class FlightRecorder:
                 detected = [m["detected"] for m in self.session.measurements]
 
                 meas_group.create_dataset("time", data=np.array(times))
-                meas_group.create_dataset("target_id", data=np.array(target_ids))
+                # IDs may be ints or strings (e.g. "target_0"); store as UTF-8 text.
+                meas_group.create_dataset(
+                    "target_id",
+                    data=np.array([str(tid) for tid in target_ids], dtype=object),
+                    dtype=h5py.string_dtype(),
+                )
                 meas_group.create_dataset("range_m", data=np.array(ranges))
                 meas_group.create_dataset("azimuth_rad", data=np.array(azimuths))
                 meas_group.create_dataset("snr_db", data=np.array(snrs))

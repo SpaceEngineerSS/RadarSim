@@ -27,6 +27,11 @@ import numpy as np
 import yaml
 
 
+# Jammer ERP used when a scenario enables ECM without specifying power; matches the
+# Target default so loader-built and directly-built targets behave the same.
+DEFAULT_JAMMER_ERP_WATTS = 1000.0
+
+
 @dataclass
 class RadarConfig:
     """Radar configuration from scenario file."""
@@ -301,7 +306,9 @@ class ScenarioLoader:
                     ),
                     has_ecm=t.get("has_ecm", False),
                     ecm_type=t.get("ecm_type", ""),
-                    ecm_power_watts=float(t.get("ecm_power_watts", 0)),
+                    ecm_power_watts=float(
+                        t.get("ecm_power_watts", DEFAULT_JAMMER_ERP_WATTS)
+                    ),
                     ecm_bandwidth_hz=float(t.get("ecm_bandwidth_hz", 100e6)),
                     drfm_gain_over_skin_db=float(
                         drfm.get("gain_over_skin_db", 10.0)

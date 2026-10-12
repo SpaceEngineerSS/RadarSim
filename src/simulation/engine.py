@@ -224,6 +224,11 @@ class SimulationLog:
         return [r for r in self.detection_history if r.target_id == target_id]
 
 
+# Oh-1992 bare-soil model validity: 10-70 deg incidence = 20-80 deg grazing.
+OH1992_MIN_GRAZING_RAD = np.radians(20.0)
+OH1992_MAX_GRAZING_RAD = np.radians(80.0)
+
+
 class SimulationEngine:
     """
     Main simulation engine - the heartbeat of the radar simulation.
@@ -871,8 +876,11 @@ class SimulationEngine:
             surface_clutter_model = "disabled"
             if self.clutter_enabled and CLUTTER_AVAILABLE and geom["range_m"] > 100:
                 radar_height_m = max(float(self.radar.position[2]), 0.0)
-                geometric_grazing = np.arcsin(
-                    np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)
+                # Surface-cell geometry is undefined at exactly normal incidence
+                # (radar overhead), so cap the grazing angle just below 90 deg.
+                geometric_grazing = min(
+                    np.arcsin(np.clip(radar_height_m / geom["range_m"], 0.0, 1.0)),
+                    np.radians(89.9),
                 )
                 freq_ghz = self.radar.frequency_hz / 1e9
                 is_water = (
@@ -897,7 +905,11 @@ class SimulationEngine:
                         polarization="VV",
                     )
                     surface_clutter_model = "nrl_five_parameter"
-                elif self.ground_model == "oh1992":
+                elif self.ground_model == "oh1992" and (
+                    OH1992_MIN_GRAZING_RAD <= geometric_grazing <= OH1992_MAX_GRAZING_RAD
+                ):
+                    # Oh-1992 is only defined for 10-70 deg incidence; outside that
+                    # domain the constant-gamma branch below is used instead.
                     model_grazing = geometric_grazing
                     sigma_h_db = ClutterModel.bare_soil_oh1992_sigma0(
                         model_grazing,
@@ -953,7 +965,12 @@ class SimulationEngine:
             active_ecm_type = (
                 target.ecm_type if self.ecm_type == "noise" else self.ecm_type
             )
-            if self.ecm_active and target.jammer_active and "noise" in active_ecm_type:
+            if (
+                self.ecm_active
+                and target.jammer_active
+                and target.jammer_power_watts > 0.0
+                and "noise" in active_ecm_type
+            ):
                 effective_jammer_bandwidth = target.jammer_bandwidth_hz
                 if self.frequency_agility_enabled:
                     effective_jammer_bandwidth = max(
@@ -993,26 +1010,18 @@ class SimulationEngine:
 
             rain_clutter_loss_db = 0.0
             if self.rain_rate_mm_hr > 0 and CLUTTER_AVAILABLE and geom["range_m"] > 100:
-                try:
-                    freq_ghz = self.radar.frequency_hz / 1e9
-                    beamwidth_rad = np.radians(self.radar.beamwidth_deg)
-
-                    eta = ClutterModel.rain_reflectivity_marshall_palmer(
-                        self.rain_rate_mm_hr, freq_ghz
+                eta = ClutterModel.rain_reflectivity_marshall_palmer(
+                    self.rain_rate_mm_hr, freq_ghz
+                )
+                rain_clutter_rcs = ClutterModel.volume_clutter_rcs(
+                    eta, geom["range_m"], self.radar.beamwidth_rad, self.radar.pulse_width_s
+                )
+                if rain_clutter_rcs > 0.0:
+                    pre_volume_clutter_snr_db = snr_db
+                    snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
+                        pre_volume_clutter_snr_db, rcs, rain_clutter_rcs
                     )
-
-                    rain_clutter_rcs = ClutterModel.volume_clutter_rcs(
-                        eta, geom["range_m"], beamwidth_rad, self._pulse_width_s
-                    )
-
-                    if rain_clutter_rcs > 0.0:
-                        pre_volume_clutter_snr_db = snr_db
-                        snr_db = ClutterModel.signal_to_noise_plus_clutter_db(
-                            pre_volume_clutter_snr_db, rcs, rain_clutter_rcs
-                        )
-                        rain_clutter_loss_db = pre_volume_clutter_snr_db - snr_db
-                except ValueError:
-                    raise
+                    rain_clutter_loss_db = pre_volume_clutter_snr_db - snr_db
 
             receiver_input_power_dbm = None
             receiver_headroom_db = None

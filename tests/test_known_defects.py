@@ -21,7 +21,6 @@ from src.simulation.objects import MotionModel, Radar, Target
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 
-PHASE1 = "Phase 1: crash fix pending"
 PHASE2 = "Phase 2: physics/convention fix pending"
 PHASE3 = "Phase 3: scenario support pending"
 
@@ -49,7 +48,6 @@ def _write(tmp_path: Path, text: str) -> str:
 # =============================================================================
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError, reason=PHASE1)
 def test_rain_does_not_crash_step():
     """engine.step() referenced the non-existent Radar.beamwidth_deg when raining."""
     engine = _engine(rain_rate_mm_hr=10.0)
@@ -57,7 +55,6 @@ def test_rain_does_not_crash_step():
     assert result.rain_clutter_loss_db >= 0.0
 
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason=PHASE1)
 def test_oh1992_low_grazing_does_not_crash():
     """Low grazing angles are outside Oh-1992's 10-70 deg incidence domain."""
     engine = _engine(enable_clutter=True, ground_model="oh1992")
@@ -65,7 +62,6 @@ def test_oh1992_low_grazing_does_not_crash():
     assert np.isfinite(result.snr_db)
 
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason=PHASE1)
 def test_ecm_target_without_power_does_not_crash(tmp_path):
     """has_ecm: true with no ecm_power_watts produced a zero-power jammer."""
     path = _write(
@@ -86,7 +82,6 @@ targets:
     engine.step()
 
 
-@pytest.mark.xfail(strict=True, raises=KeyError, reason=PHASE1)
 def test_recorder_accepts_target_id_key(tmp_path):
     from src.simulation.recorder import FlightRecorder
 
@@ -98,7 +93,6 @@ def test_recorder_accepts_target_id_key(tmp_path):
     assert recorder.stop_recording() is not None
 
 
-@pytest.mark.xfail(strict=True, raises=(TypeError, ValueError), reason=PHASE1)
 def test_replay_accepts_non_integer_target_ids(tmp_path):
     from src.io.replay_loader import ReplayLoader
     from src.simulation.recorder import FlightRecorder

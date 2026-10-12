@@ -21,6 +21,7 @@ Architecture: Model-View-Controller (MVC)
 - Components extracted to src/ui/panels/ for modularity
 """
 
+import logging
 import sys
 from enum import Enum
 from pathlib import Path
@@ -62,6 +63,11 @@ from .sar_viewer import SARViewer
 from .tactical_3d import TacticalMap3D
 from .thread_manager import SimulationThread, create_demo_scenario
 
+logger = logging.getLogger(__name__)
+
+# Upper bound for waiting on the in-flight step when stopping the simulation.
+SIM_THREAD_STOP_TIMEOUT_MS = 5000
+
 
 class SimulationMode(Enum):
     """Simulation operating modes."""
@@ -95,6 +101,10 @@ class MainWindow(QMainWindow):
         # Create simulation
         self.engine = create_demo_scenario()
         self.sim_thread: Optional[SimulationThread] = None
+        # Loop state survives thread restarts (scenario load, reset).
+        self._sim_paused = False
+        self._sim_speed = 1.0
+        self._current_scenario_path: Optional[str] = None
 
         # Replay mode state
         self.mode = SimulationMode.LIVE
@@ -486,7 +496,7 @@ class MainWindow(QMainWindow):
 
         # SAR Image Generator
         self.sar_action = QAction("🛰️ Generate &SAR Image...", self)
-        self.sar_action.setShortcut("Ctrl+Shift+S")
+        self.sar_action.setShortcut("Ctrl+Shift+G")
         self.sar_action.triggered.connect(self._on_generate_sar)
         advanced_menu.addAction(self.sar_action)
 
@@ -629,26 +639,47 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════════════════════════════════════
 
     def _start_simulation(self) -> None:
-        """Start the simulation thread."""
+        """Start a simulation thread for ``self.engine``, keeping pause and speed."""
         if self.sim_thread is not None:
             self._stop_simulation()
 
-        self.sim_thread = SimulationThread(self.engine, update_rate_hz=30.0)
-
-        # Connect signals
+        # Parented to the window so Qt never destroys a thread that is still running.
+        self.sim_thread = SimulationThread(self.engine, update_rate_hz=30.0, parent=self)
         self.sim_thread.update_data.connect(self._on_update)
         self.sim_thread.error.connect(self._on_error)
+        self.sim_thread.paused_changed.connect(self._on_paused_changed)
+        self.sim_thread.finished.connect(self.sim_thread.deleteLater)
+        self.sim_thread.set_speed(self._sim_speed)
+        if self._sim_paused:
+            self.sim_thread.pause()
+        self._sync_play_button()
 
         self.sim_thread.start()
         self.status_bar.showMessage("Simulation RUNNING")
 
     def _stop_simulation(self) -> None:
-        """Stop the simulation thread."""
-        if self.sim_thread:
-            self.sim_thread.stop()
-            self.sim_thread.wait(1000)
-            self.sim_thread = None
+        """Stop the simulation thread and wait for the current step to finish."""
+        thread = self.sim_thread
+        if thread is None:
+            return
+        self.sim_thread = None
+        # Disconnect first so frames already queued by the old engine are dropped.
+        thread.update_data.disconnect(self._on_update)
+        thread.error.disconnect(self._on_error)
+        thread.paused_changed.disconnect(self._on_paused_changed)
+        thread.stop()
+        if not thread.wait(SIM_THREAD_STOP_TIMEOUT_MS):
+            logger.warning(
+                "Simulation thread did not stop within %d ms", SIM_THREAD_STOP_TIMEOUT_MS
+            )
         self.status_bar.showMessage("Simulation STOPPED")
+
+    def _submit_to_engine(self, command) -> None:
+        """Apply ``command(engine)`` safely, whether or not the simulation is running."""
+        if self.sim_thread is not None:
+            self.sim_thread.submit(command)
+        else:
+            command(self.engine)
 
     @Slot(dict)
     def _on_update(self, state: dict) -> None:
@@ -689,8 +720,22 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_error(self, error_msg: str) -> None:
-        """Handle simulation error."""
+        """Handle simulation error. Step errors also pause the loop."""
         self.status_bar.showMessage(f"ERROR: {error_msg}")
+        QMessageBox.warning(self, "Simulation Error", error_msg)
+
+    @Slot(bool)
+    def _on_paused_changed(self, paused: bool) -> None:
+        self._sim_paused = paused
+        self._sync_play_button()
+
+    def _sync_play_button(self) -> None:
+        """Button shows the action it will perform: PAUSE while running, PLAY while paused."""
+        button = self.control_panel.play_btn
+        button.blockSignals(True)
+        button.setChecked(not self._sim_paused)
+        button.setText("▶ PLAY" if self._sim_paused else "❚❚ PAUSE")
+        button.blockSignals(False)
 
     # ═══════════════════════════════════════════════════════════════════════
     # TARGET & ECM HANDLERS
@@ -731,10 +776,10 @@ class MainWindow(QMainWindow):
         - Atmospheric attenuation (especially at 60 GHz O₂ resonance)
         - Doppler resolution
         """
-        if self.engine and hasattr(self.engine, "radar"):
-            self.engine.radar.frequency_hz = frequency_hz
-            freq_ghz = frequency_hz / 1e9
-            self.status_bar.showMessage(f"FREQ: {freq_ghz:.1f} GHz")
+        self._submit_to_engine(
+            lambda engine: setattr(engine.radar, "frequency_hz", frequency_hz)
+        )
+        self.status_bar.showMessage(f"FREQ: {frequency_hz / 1e9:.1f} GHz")
 
     def _on_power_changed(self, power_watts: float) -> None:
         """
@@ -744,10 +789,10 @@ class MainWindow(QMainWindow):
         - SNR (directly proportional)
         - Detection range (∝ P^1/4)
         """
-        if self.engine and hasattr(self.engine, "radar"):
-            self.engine.radar.power_watts = power_watts
-            power_kw = power_watts / 1000
-            self.status_bar.showMessage(f"POWER: {power_kw:.0f} kW")
+        self._submit_to_engine(
+            lambda engine: setattr(engine.radar, "power_watts", power_watts)
+        )
+        self.status_bar.showMessage(f"POWER: {power_watts / 1000:.0f} kW")
 
     def _on_range_changed(self, range_km: float) -> None:
         """Handle range slider change."""
@@ -755,6 +800,7 @@ class MainWindow(QMainWindow):
 
     def _on_speed_changed(self, speed: float) -> None:
         """Handle speed slider change."""
+        self._sim_speed = speed
         if self.sim_thread:
             self.sim_thread.set_speed(speed)
 
@@ -794,9 +840,11 @@ class MainWindow(QMainWindow):
                 self.ppi_scope.set_max_range(preset.max_range_km)
 
             # 3. Update engine radar parameters (if engine exists)
-            if hasattr(self, "engine") and self.engine:
-                self.engine.radar.frequency_hz = preset.frequency_hz
-                self.engine.radar.power_watts = preset.peak_power_watts
+            def apply_preset(engine) -> None:
+                engine.radar.frequency_hz = preset.frequency_hz
+                engine.radar.power_watts = preset.peak_power_watts
+
+            self._submit_to_engine(apply_preset)
 
             # 4. Show status
             wavelength_cm = preset.wavelength_m * 100
@@ -841,18 +889,30 @@ class MainWindow(QMainWindow):
             self.scope_splitter.setSizes([500, 0, 300])
 
     def _on_play_toggled(self, checked: bool) -> None:
-        """Handle play/pause button."""
-        if self.sim_thread:
-            if checked:
-                self.sim_thread.resume()
-                self.control_panel.play_btn.setText("▶ PLAY")
-            else:
-                self.sim_thread.pause()
-                self.control_panel.play_btn.setText("❚❚ PAUSE")
+        """Handle play/pause button (checked = running)."""
+        self._sim_paused = not checked
+        if self.sim_thread is None:
+            self._start_simulation()
+        elif checked:
+            self.sim_thread.resume()
+        else:
+            self.sim_thread.pause()
+        self._sync_play_button()
+
+    def _toggle_pause(self) -> None:
+        self.control_panel.play_btn.click()
 
     def _on_reset(self) -> None:
-        """Reset simulation."""
-        self._switch_to_live_mode()
+        """Restart the current scenario (or the demo) from t = 0."""
+        if self.mode != SimulationMode.LIVE:
+            self._switch_to_live_mode()
+            return
+        if self._current_scenario_path:
+            self.load_scenario(self._current_scenario_path)
+        else:
+            self.engine = create_demo_scenario()
+            self._start_simulation()
+        self.status_bar.showMessage("Simulation reset")
 
     # ═══════════════════════════════════════════════════════════════════════
     # RECORDING HANDLERS
@@ -918,15 +978,14 @@ class MainWindow(QMainWindow):
             True if loaded successfully, False otherwise
         """
         try:
-            # Load scenario
+            # Build the new engine first so a bad file leaves the current run intact.
             loader = ScenarioLoader(filepath)
             scenario_name = loader.get_scenario_name()
+            new_engine = loader.create_simulation_engine()
 
-            # Stop current simulation
             self._stop_simulation()
-
-            # Create new engine from scenario
-            self.engine = loader.create_simulation_engine()
+            self.engine = new_engine
+            self._current_scenario_path = filepath
 
             # ═══ TERRAIN INTEGRATION ═══
             # Pass terrain to visualization components
@@ -1060,6 +1119,7 @@ class MainWindow(QMainWindow):
 
         # Restart live simulation
         self.engine = create_demo_scenario()
+        self._current_scenario_path = None
         self._start_simulation()
 
         self.status_bar.showMessage("MODE: LIVE SIMULATION")
@@ -1359,7 +1419,7 @@ class MainWindow(QMainWindow):
     def _on_clutter_toggled(self, checked: bool) -> None:
         """Handle Clutter toggle."""
         if self.sim_thread and hasattr(self.sim_thread, "set_clutter_mode"):
-            self.sim_thread.set_clutter_mode(checked, "rural")
+            self.sim_thread.set_clutter_mode(checked)
 
         status = "ACTIVE" if checked else "OFF"
         self.status_bar.showMessage(f"CLUTTER: {status}")
@@ -1465,41 +1525,42 @@ class MainWindow(QMainWindow):
         """Save current simulation state to YAML."""
         from PySide6.QtWidgets import QFileDialog, QInputDialog
 
-        # Get filename
+        from src.io.exporter import export_scenario_to_yaml
+
         filepath, _ = QFileDialog.getSaveFileName(
             self,
             "Save Scenario",
-            "scenarios/custom_scenario.yaml",
+            str(self._get_scenarios_dir() / "custom_scenario.yaml"),
             "YAML Files (*.yaml *.yml)",
         )
-
         if not filepath:
             return
 
-        # Get scenario name
         name, ok = QInputDialog.getText(
             self, "Scenario Name", "Enter scenario name:", text="Custom Scenario"
         )
-
         if not ok:
-            name = "Custom Scenario"
+            return
+
+        def export(engine) -> bool:
+            return export_scenario_to_yaml(engine, filepath, scenario_name=name)
 
         try:
-            from src.io.exporter import export_scenario_to_yaml
-
-            if self.sim_thread and self.sim_thread.engine:
-                success = export_scenario_to_yaml(
-                    self.sim_thread.engine, filepath, scenario_name=name
-                )
-
-                if success:
-                    self.status_bar.showMessage(f"Scenario saved: {filepath}")
-                else:
-                    self.status_bar.showMessage("Failed to save scenario")
+            if self.sim_thread is not None:
+                success = self.sim_thread.call_sync(export)
             else:
-                self.status_bar.showMessage("No active simulation to save")
-        except ImportError as e:
-            print(f"[EXPORT] Exporter not available: {e}")
+                success = export(self.engine)
+        except Exception as exc:
+            logger.exception("Scenario export failed")
+            QMessageBox.critical(self, "Save Scenario", f"Could not save scenario:\n{exc}")
+            return
+
+        if success:
+            self.status_bar.showMessage(f"Scenario saved: {filepath}")
+        else:
+            QMessageBox.critical(
+                self, "Save Scenario", f"Could not save scenario to:\n{filepath}"
+            )
 
     # Keyboard shortcuts
 
@@ -1509,16 +1570,12 @@ class MainWindow(QMainWindow):
 
         # Space - Play/Pause toggle
         if key == Qt.Key.Key_Space and not event.modifiers():
-            if self.sim_thread and self.sim_thread.isRunning():
-                self.control_panel._toggle_pause()
-            else:
-                self._start_simulation()
+            self._toggle_pause()
             return
 
-        # R - Reset (stop and restart)
+        # R - Restart the current scenario
         if key == Qt.Key.Key_R and not event.modifiers():
-            self._stop_simulation()
-            self.status_bar.showMessage("Simulation reset")
+            self._on_reset()
             return
 
         # 1-4 - Tab switching

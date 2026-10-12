@@ -159,7 +159,7 @@ class AdvancedLPIRadar:
         shaped_signal = base_signal * power_adjustment
 
         # Gaussian window uygula
-        window = signal.gaussian(len(shaped_signal), std=len(shaped_signal) / 8)
+        window = signal.windows.gaussian(len(shaped_signal), std=len(shaped_signal) / 8)
         shaped_signal *= window
 
         return shaped_signal

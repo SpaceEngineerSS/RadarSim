@@ -24,17 +24,27 @@ Usage:
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import h5py
 import numpy as np
+
+
+def _parse_target_id(raw: Any) -> Union[int, str]:
+    """Normalize a recorded target ID: integers stay integers, others stay text."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return str(raw)
 
 
 @dataclass
 class TargetState:
     """State of a single target at a specific time."""
 
-    target_id: int
+    target_id: Union[int, str]
     name: str
     target_type: str
     position: np.ndarray  # [x, y, z]
@@ -185,7 +195,7 @@ class ReplayLoader:
         targets_group = self._file.get("targets", None)
         if targets_group:
             for target_id_str in targets_group.keys():
-                target_id = int(target_id_str)
+                target_id = _parse_target_id(target_id_str)
                 target_group = targets_group[target_id_str]
 
                 # Load positions (Nx4: t, x, y, z)
@@ -220,7 +230,10 @@ class ReplayLoader:
                 if "time" in meas_group
                 else np.array([]),
                 "target_id": (
-                    np.array(meas_group["target_id"])
+                    np.array(
+                        [_parse_target_id(x) for x in meas_group["target_id"][()]],
+                        dtype=object,
+                    )
                     if "target_id" in meas_group
                     else np.array([])
                 ),
@@ -340,7 +353,7 @@ class ReplayLoader:
             mask = np.abs(time_arr - t) < 0.5  # Within 0.5s
 
             for idx in np.where(mask)[0]:
-                tid = int(self._measurements["target_id"][idx])
+                tid = self._measurements["target_id"][idx]
                 measurement_lookup[tid] = {
                     "snr_db": float(self._measurements["snr_db"][idx]),
                     "detected": bool(self._measurements["detected"][idx]),
@@ -424,7 +437,7 @@ class ReplayLoader:
             power_watts=self.metadata.power_watts if self.metadata else 100e3,
         )
 
-    def get_snr_history(self, target_id: int = None) -> Tuple[np.ndarray, np.ndarray]:
+    def get_snr_history(self, target_id: Optional[Union[int, str]] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get SNR values over time.
 

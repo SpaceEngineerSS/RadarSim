@@ -1,118 +1,187 @@
 """
 Simulation Thread Manager
 
-Bridge between simulation loop (background thread) and UI (main thread).
+Bridge between the simulation loop (background thread) and the UI (main thread).
 
-Uses PySide6 signals/slots for thread-safe communication.
+Threading model:
+    - While the thread runs, only the worker thread calls ``engine.step()`` or reads
+      engine state to build frames.
+    - The GUI never mutates the engine directly. It calls ``SimulationThread.submit``
+      (fire-and-forget) or ``SimulationThread.call_sync`` (blocking, with result);
+      both enqueue a callable that the worker executes between two steps.
+    - When the thread is not running, commands execute immediately on the caller
+      thread because nothing else touches the engine.
+    - Frames reach the UI through the queued ``update_data`` signal.
 
-Architecture:
-    - SimulationWorker runs engine.step() in a QThread
-    - Emits update_data signal with current state
-    - UI connects to signal to update visualization
-
-Reference: PySide6 Threading Best Practices
+Reference: Qt documentation, "Threads and QObjects".
 """
 
+import logging
 import os
-
-# Import simulation engine
+import queue
 import sys
+import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.advanced.eccm import ECCMController
 from src.physics.rcs import SwerlingModel
 from src.simulation.engine import SimulationEngine
 from src.simulation.objects import MotionModel, Radar, Target
 
+logger = logging.getLogger(__name__)
+
+EngineCommand = Callable[[SimulationEngine], Any]
+
+# Longest wall-clock gap fed into one step. Larger gaps (GUI stalls, debugger
+# breaks, window drags) would otherwise teleport targets in a single step.
+MAX_FRAME_GAP_S = 0.25
+
+MIN_SPEED_FACTOR = 0.1
+MAX_SPEED_FACTOR = 10.0
+
+
+class _PendingCall:
+    """A queued engine command and, for synchronous calls, its completion state."""
+
+    __slots__ = ("command", "done", "result", "error")
+
+    def __init__(self, command: EngineCommand, synchronous: bool):
+        self.command = command
+        self.done = threading.Event() if synchronous else None
+        self.result: Any = None
+        self.error: Optional[BaseException] = None
+
+
+def _execute(call: _PendingCall, engine: SimulationEngine) -> None:
+    try:
+        call.result = call.command(engine)
+    except Exception as exc:  # reported to the caller or via the error signal
+        logger.exception("Engine command failed")
+        call.error = exc
+    finally:
+        if call.done is not None:
+            call.done.set()
+
 
 class SimulationWorker(QObject):
     """
-    Worker object that runs simulation in background thread.
-
-    Emits signals for UI updates without blocking the main thread.
+    Runs the simulation loop. Created in the GUI thread; ``run`` executes in the
+    ``SimulationThread``.
 
     Signals:
-        update_data: Emitted with current simulation state
-        finished: Emitted when simulation stops
-        error: Emitted on error with message
+        update_data: Emitted with the state dictionary after each step
+        paused_changed: Emitted when the loop pauses or resumes (including on error)
+        stopped: Emitted when the loop exits
+        error: Emitted with a message when a step or command fails
     """
 
-    # Signals (must be class attributes)
     update_data = Signal(dict)
-    finished = Signal()
+    paused_changed = Signal(bool)
+    stopped = Signal()
     error = Signal(str)
 
     def __init__(
         self,
         engine: SimulationEngine,
         update_rate_hz: float = 30.0,
+        eccm_controller: Optional[ECCMController] = None,
         parent: Optional[QObject] = None,
     ):
-        """
-        Initialize simulation worker.
-
-        Args:
-            engine: SimulationEngine instance
-            update_rate_hz: UI update rate [Hz]
-            parent: Parent QObject
-        """
         super().__init__(parent)
         self.engine = engine
         self.update_interval = 1.0 / update_rate_hz
+        self.eccm_controller = eccm_controller
+        self._commands: "queue.SimpleQueue[_PendingCall]" = queue.SimpleQueue()
         self._running = False
         self._paused = False
         self._speed_factor = 1.0
 
-    def run(self):
-        """
-        Main simulation loop.
+    # ------------------------------------------------------------------ loop
 
-        Runs engine.step() at specified rate and emits update signals.
-        """
+    def run(self) -> None:
+        """Main simulation loop; executes in the worker thread."""
         self._running = True
         last_update = time.perf_counter()
 
         while self._running:
-            try:
-                current_time = time.perf_counter()
-                elapsed = current_time - last_update
+            self._drain_commands()
+            now = time.perf_counter()
 
-                if not self._paused and elapsed >= self.update_interval:
-                    # Calculate dt based on speed factor
-                    dt = elapsed * self._speed_factor
-
-                    # Step simulation
+            if self._paused:
+                # Keep the clock current so resuming does not produce one huge step.
+                last_update = now
+            elif now - last_update >= self.update_interval:
+                dt = min(now - last_update, MAX_FRAME_GAP_S) * self._speed_factor
+                last_update = now
+                try:
                     results = self.engine.step(dt)
+                    state = self._build_state_dict(results, dt)
+                except Exception as exc:
+                    logger.exception("Simulation step failed")
+                    self._set_paused(True)
+                    self.error.emit(f"Simulation paused after an error: {exc}")
+                    continue
+                self.update_data.emit(state)
 
-                    # Build state dictionary for UI
-                    state = self._build_state_dict(results)
+            time.sleep(0.005)
 
-                    # Emit update signal
-                    self.update_data.emit(state)
+        self._drain_commands()
+        self.stopped.emit()
 
-                    last_update = current_time
+    def enqueue(self, call: _PendingCall) -> None:
+        self._commands.put(call)
 
-                # Small sleep to prevent CPU spinning - increased for stability
-                time.sleep(0.01)  # 10ms sleep instead of 1ms
+    def _drain_commands(self) -> None:
+        while True:
+            try:
+                call = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            _execute(call, self.engine)
+            if call.error is not None and call.done is None:
+                self.error.emit(str(call.error))
 
-            except Exception as e:
-                self.error.emit(str(e))
-                break
+    # --------------------------------------------------------------- control
 
-        self.finished.emit()
+    def stop(self) -> None:
+        self._running = False
 
-    def _build_state_dict(self, results) -> Dict[str, Any]:
-        """
-        Build state dictionary for UI update.
+    def _set_paused(self, paused: bool) -> None:
+        if paused != self._paused:
+            self._paused = paused
+            self.paused_changed.emit(paused)
 
-        Returns:
-            Dict containing all data needed for visualization
-        """
+    def pause(self) -> None:
+        self._set_paused(True)
+
+    def resume(self) -> None:
+        self._set_paused(False)
+
+    def set_speed(self, factor: float) -> None:
+        self._speed_factor = float(np.clip(factor, MIN_SPEED_FACTOR, MAX_SPEED_FACTOR))
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    @property
+    def speed_factor(self) -> float:
+        return self._speed_factor
+
+    # ----------------------------------------------------------------- state
+
+    def _build_state_dict(self, results, dt: float) -> Dict[str, Any]:
+        """Build the frame dictionary sent to the UI. Runs in the worker thread."""
         targets_data = []
         detections_for_tracker = []  # (x, y) positions for tracker
 
@@ -121,102 +190,72 @@ class SimulationWorker(QObject):
                 target.position, target.velocity
             )
 
-            # Get detection status for this target
             is_detected = self.engine.state.detections.get(target.target_id, False)
             snr = self.engine.state.snr_values.get(target.target_id, 0.0)
 
-            target_data = {
-                "id": target.target_id,
-                "name": target.target_type,  # For MIL-STD-2525 affiliation
-                "type": target.target_type,
-                "position": target.position.tolist(),
-                "velocity": target.velocity.tolist(),
-                "range_m": geom["range_m"],
-                "range_km": geom["range_m"] / 1000,
-                "azimuth_rad": geom["azimuth_rad"],
-                "azimuth_deg": geom["azimuth_deg"],
-                "elevation_rad": geom["elevation_rad"],
-                "elevation_deg": geom["elevation_deg"],
-                "radial_velocity_mps": geom["radial_velocity_mps"],
-                "rcs_m2": target.rcs_mean,
-                "is_detected": is_detected,
-                "snr_db": snr,
-            }
-            targets_data.append(target_data)
+            targets_data.append(
+                {
+                    "id": target.target_id,
+                    "name": target.target_type,  # For MIL-STD-2525 affiliation
+                    "type": target.target_type,
+                    "position": target.position.tolist(),
+                    "velocity": target.velocity.tolist(),
+                    "range_m": geom["range_m"],
+                    "range_km": geom["range_m"] / 1000,
+                    "azimuth_rad": geom["azimuth_rad"],
+                    "azimuth_deg": geom["azimuth_deg"],
+                    "elevation_rad": geom["elevation_rad"],
+                    "elevation_deg": geom["elevation_deg"],
+                    "radial_velocity_mps": geom["radial_velocity_mps"],
+                    "rcs_m2": target.rcs_mean,
+                    "is_detected": is_detected,
+                    "snr_db": snr,
+                }
+            )
 
-            # Collect detections for tracker
             if is_detected:
                 detections_for_tracker.append((target.position[0], target.position[1]))
 
-        # ═══ TRACK-WHILE-SCAN UPDATE ═══
         tracks_data = []
-        if (
-            hasattr(self.engine, "track_manager")
-            and self.engine.track_manager is not None
-        ):
-            try:
-                # Update tracker with detections
-                tracks = self.engine.track_manager.update(
-                    detections_for_tracker, dt=self.engine.dt
-                )
+        if getattr(self.engine, "track_manager", None) is not None:
+            tracks = self.engine.track_manager.update(detections_for_tracker, dt=dt)
+            for track in tracks:
+                track_dict = {
+                    "track_id": track.id,
+                    "id": track.id,
+                    "status": track.status.value,
+                    "position": list(track.position),
+                    "velocity": list(track.velocity),
+                    "speed_mps": track.speed_mps,
+                    "heading_rad": track.heading_rad,
+                    "hits": track.hits,
+                    "misses": track.misses,
+                    "history": track.history[-20:],
+                    "classification": track.classification,
+                    "confidence": track.confidence,
+                }
+                # Covariance drives the EKF uncertainty ellipse.
+                if getattr(track.state, "P", None) is not None:
+                    track_dict["covariance"] = track.state.P.tolist()
+                tracks_data.append(track_dict)
 
-                # Build track data for UI
-                for track in tracks:
-                    track_dict = {
-                        "track_id": track.id,
-                        "id": track.id,
-                        "status": track.status.value,
-                        "position": list(track.position),
-                        "velocity": list(track.velocity),
-                        "speed_mps": track.speed_mps,
-                        "heading_rad": track.heading_rad,
-                        "hits": track.hits,
-                        "misses": track.misses,
-                        "history": track.history[-20:],  # Last 20 positions
-                        "classification": track.classification,
-                        "confidence": track.confidence,
-                    }
-                    # Covariance drives the EKF uncertainty ellipse.
-                    if hasattr(track.state, "P") and track.state.P is not None:
-                        track_dict["covariance"] = track.state.P.tolist()
-                    tracks_data.append(track_dict)
-            except Exception:
-                pass  # Fail silently
+        false_targets_data = [
+            {
+                "target_id": ft.false_id,
+                "position": np.asarray(ft.position).tolist(),
+                "velocity": np.asarray(ft.velocity).tolist(),
+                "rcs_m2": ft.rcs_m2,
+                "ecm_type": ft.ecm_type,
+                "is_false_target": True,
+            }
+            for ft in self.engine.false_targets
+        ]
 
-        # Build false targets data for visualization (with safety)
-        false_targets_data = []
-        try:
-            for ft in self.engine.false_targets[:20]:  # Cap at 20 for safety
-                false_targets_data.append(
-                    {
-                        "target_id": ft.false_id,
-                        "position": (
-                            ft.position.tolist()
-                            if hasattr(ft.position, "tolist")
-                            else list(ft.position)
-                        ),
-                        "velocity": (
-                            ft.velocity.tolist()
-                            if hasattr(ft.velocity, "tolist")
-                            else list(ft.velocity)
-                        ),
-                        "rcs_m2": ft.rcs_m2,
-                        "ecm_type": ft.ecm_type,
-                        "is_false_target": True,
-                    }
-                )
-        except Exception:
-            pass  # Fail silently to prevent crash
-
-        # Pulse-Doppler range-Doppler map
         rd_map_data = None
         pd_metadata = None
-        if (
-            getattr(self.engine, "pulse_doppler_enabled", False)
-            and self.engine._rd_map is not None
-        ):
-            rdm = self.engine._rd_map
-            rd_map_data = rdm.data_db.tolist()  # Serialize for signal
+        rdm = getattr(self.engine, "_rd_map", None)
+        if getattr(self.engine, "pulse_doppler_enabled", False) and rdm is not None:
+            rd_map_data = rdm.data_db.tolist()
             pd_metadata = {
                 "range_axis_m": rdm.range_axis_m.tolist(),
                 "velocity_axis_mps": rdm.velocity_axis_mps.tolist(),
@@ -235,8 +274,15 @@ class SimulationWorker(QObject):
                 "window_enbw_bins": rdm.window_enbw_bins,
             }
 
+        eccm_state = (
+            self.eccm_controller.get_status()
+            if self.eccm_controller is not None
+            else {"jamming_active": False, "effective_jsr_db": -100}
+        )
+
         return {
             "time": self.engine.simulation_time,
+            "dt": dt,
             "radar": {
                 "position": self.engine.radar.position.tolist(),
                 "antenna_azimuth_rad": self.engine.radar.antenna_azimuth,
@@ -245,22 +291,17 @@ class SimulationWorker(QObject):
                 "power_kw": self.engine.radar.power_watts / 1e3,
             },
             "targets": targets_data,
-            "tracks": tracks_data,  # Track-While-Scan data
+            "tracks": tracks_data,
             "detection_count": sum(1 for t in targets_data if t["is_detected"]),
             "total_targets": len(targets_data),
             "total_tracks": len(tracks_data),
-            # ECM state for visualization
             "jamming_active": getattr(self.engine, "ecm_active", False),
             "ecm_type": getattr(self.engine, "ecm_type", "noise"),
             "false_targets": false_targets_data,
-            # Pulse-Doppler state
-            "pulse_doppler_enabled": getattr(
-                self.engine, "pulse_doppler_enabled", False
-            ),
+            "pulse_doppler_enabled": getattr(self.engine, "pulse_doppler_enabled", False),
             "rd_map": rd_map_data,
             "pd_metadata": pd_metadata,
-            # ECCM state
-            "eccm": self._get_eccm_state(),
+            "eccm": eccm_state,
             "log": {
                 "total_opportunities": self.engine.log.total_opportunities,
                 "total_detections": self.engine.log.total_detections,
@@ -268,74 +309,21 @@ class SimulationWorker(QObject):
             },
         }
 
-    def _get_eccm_state(self) -> dict:
-        """
-        Get ECCM state for UI.
-
-        Returns dict with jamming/ECCM status for the control panel.
-        Lazily initializes the ECCM controller on first call.
-        """
-        # Lazy init
-        if not hasattr(self, "_eccm_controller"):
-            try:
-                from src.advanced.eccm import ECCMController
-
-                self._eccm_controller = ECCMController(
-                    center_freq_hz=getattr(self.engine, "frequency_hz", 10e9),
-                    nominal_prf_hz=getattr(self.engine, "prf_hz", 1000.0),
-                )
-            except (ImportError, Exception):
-                self._eccm_controller = None
-
-        if self._eccm_controller is not None:
-            try:
-                return self._eccm_controller.get_status()
-            except Exception:
-                pass
-        return {"jamming_active": False, "effective_jsr_db": -100}
-
-    def stop(self):
-        """Stop the simulation loop."""
-        self._running = False
-
-    def pause(self):
-        """Pause the simulation."""
-        self._paused = True
-
-    def resume(self):
-        """Resume the simulation."""
-        self._paused = False
-
-    def set_speed(self, factor: float):
-        """Set simulation speed factor."""
-        self._speed_factor = max(0.1, min(10.0, factor))
-
-    @property
-    def is_running(self) -> bool:
-        """Check if simulation is running."""
-        return self._running
-
-    @property
-    def is_paused(self) -> bool:
-        """Check if simulation is paused."""
-        return self._paused
-
 
 class SimulationThread(QThread):
     """
-    Thread wrapper for SimulationWorker.
-
-    Provides clean thread lifecycle management.
+    Thread that runs a ``SimulationWorker``; the GUI's only door to the engine.
 
     Usage:
-        thread = SimulationThread(engine)
-        thread.update_data.connect(ui.update_display)
+        thread = SimulationThread(engine, parent=window)
+        thread.update_data.connect(window.on_frame)
+        thread.submit(lambda engine: setattr(engine.radar, "power_watts", 2e5))
         thread.start()
     """
 
-    # Forward signals from worker
     update_data = Signal(dict)
-    finished = Signal()
+    paused_changed = Signal(bool)
+    stopped = Signal()
     error = Signal(str)
 
     def __init__(
@@ -344,201 +332,124 @@ class SimulationThread(QThread):
         update_rate_hz: float = 30.0,
         parent: Optional[QObject] = None,
     ):
-        """
-        Initialize simulation thread.
-
-        Args:
-            engine: SimulationEngine instance
-            update_rate_hz: UI update rate [Hz]
-            parent: Parent QObject
-        """
         super().__init__(parent)
         self.engine = engine
         self.update_rate_hz = update_rate_hz
-        self._worker: Optional[SimulationWorker] = None
+        self.eccm_controller = ECCMController(
+            center_freq_hz=engine.radar.frequency_hz,
+            nominal_prf_hz=engine.radar.prf_hz,
+        )
+        self._worker = SimulationWorker(
+            engine, update_rate_hz, eccm_controller=self.eccm_controller
+        )
+        self._worker.update_data.connect(self.update_data)
+        self._worker.paused_changed.connect(self.paused_changed)
+        self._worker.stopped.connect(self.stopped)
+        self._worker.error.connect(self.error)
 
-    def run(self):
-        """Thread entry point."""
-        self._worker = SimulationWorker(self.engine, self.update_rate_hz)
-
-        # Connect worker signals to thread signals
-        self._worker.update_data.connect(self.update_data.emit)
-        self._worker.finished.connect(self.finished.emit)
-        self._worker.error.connect(self.error.emit)
-
-        # Run worker
+    def run(self) -> None:
         self._worker.run()
 
-    def stop(self):
-        """Stop the simulation."""
-        if self._worker:
-            self._worker.stop()
+    # ------------------------------------------------------ engine commands
 
-    def pause(self):
-        """Pause the simulation."""
-        if self._worker:
-            self._worker.pause()
+    def submit(self, command: EngineCommand) -> None:
+        """Apply ``command(engine)`` between steps; runs at once if not running."""
+        call = _PendingCall(command, synchronous=False)
+        if self.isRunning():
+            self._worker.enqueue(call)
+            return
+        _execute(call, self.engine)
+        if call.error is not None:
+            self.error.emit(str(call.error))
 
-    def resume(self):
-        """Resume the simulation."""
-        if self._worker:
-            self._worker.resume()
+    def call_sync(self, command: EngineCommand, timeout_s: float = 5.0) -> Any:
+        """Run ``command(engine)`` between steps and return its result (blocking)."""
+        call = _PendingCall(command, synchronous=True)
+        if self.isRunning():
+            self._worker.enqueue(call)
+            if not call.done.wait(timeout_s):
+                raise TimeoutError("simulation thread did not respond")
+        else:
+            _execute(call, self.engine)
+        if call.error is not None:
+            raise call.error
+        return call.result
 
-    def set_speed(self, factor: float):
-        """Set simulation speed factor."""
-        if self._worker:
-            self._worker.set_speed(factor)
+    # ------------------------------------------------------- loop control
+
+    def stop(self) -> None:
+        self._worker.stop()
+
+    def pause(self) -> None:
+        self._worker.pause()
+
+    def resume(self) -> None:
+        self._worker.resume()
+
+    def set_speed(self, factor: float) -> None:
+        self._worker.set_speed(factor)
+
+    @property
+    def is_paused(self) -> bool:
+        return self._worker.is_paused
+
+    @property
+    def speed_factor(self) -> float:
+        return self._worker.speed_factor
+
+    # ---------------------------------------------------- feature toggles
 
     def set_ecm_state(
         self, active: bool, ecm_type: str = "noise", target_id: Optional[int] = None
-    ):
-        """
-        Set ECM state in the simulation engine (thread-safe).
+    ) -> None:
+        """Set engine ECM mode and, optionally, one target's jammer state."""
 
-        Args:
-            active: Whether ECM is active
-            ecm_type: Type of ECM ('noise_barrage', 'noise_spot', 'drfm', 'chaff', 'decoy')
-            target_id: Optional target ID to update jammer state
-        """
-        try:
-            # Update engine ECM mode
-            self.engine.set_ecm_mode(active, ecm_type)
-
-            # Update specific target jammer state if provided
+        def apply(engine: SimulationEngine) -> None:
+            engine.set_ecm_mode(active, ecm_type)
             if target_id is not None:
-                for target in self.engine.targets:
+                for target in engine.targets:
                     if target.target_id == target_id:
                         target.jammer_active = active
                         break
-        except Exception as e:
-            print(f"[ECM] Engine update failed: {e}")
 
-    def set_lpi_mode(self, enabled: bool, technique: str = "FHSS"):
-        """
-        Set LPI (Low Probability of Intercept) mode in the simulation engine.
+        self.submit(apply)
 
-        Args:
-            enabled: Whether LPI mode is active
-            technique: LPI technique ('FHSS', 'DSSS', 'Costas')
-        """
-        try:
-            # Store LPI state in engine
-            self.engine.lpi_enabled = enabled
-            self.engine.lpi_technique = technique
+    def set_lpi_mode(self, enabled: bool, technique: str = "FHSS") -> None:
+        def apply(engine: SimulationEngine) -> None:
+            engine.lpi_enabled = enabled
+            engine.lpi_technique = technique
 
-            # LPI mode reduces peak power but spreads energy for lower detectability
-            # Scientific basis: LPI radars trade SNR for reduced probability of intercept
-            if enabled:
-                print(f"[LPI] Mode ACTIVATED | Technique: {technique}")
-            else:
-                print("[LPI] Mode DEACTIVATED")
-        except Exception as e:
-            print(f"[LPI] Engine update failed: {e}")
+        self.submit(apply)
 
     def set_fusion_mode(
         self, enabled: bool, method: str = "covariance_intersection"
-    ):
-        """
-        Set sensor fusion mode in the simulation engine.
+    ) -> None:
+        def apply(engine: SimulationEngine) -> None:
+            engine.fusion_enabled = enabled
+            engine.fusion_method = method
 
-        Args:
-            enabled: Whether sensor fusion is active
-            method: ``covariance_intersection`` or ``independent_gaussian``
-        """
-        try:
-            # Store fusion state in engine
-            self.engine.fusion_enabled = enabled
-            self.engine.fusion_method = method
+        self.submit(apply)
 
-            if enabled:
-                print(f"[FUSION] Mode ACTIVATED | Method: {method}")
-            else:
-                print("[FUSION] Mode DEACTIVATED")
-        except Exception as e:
-            print(f"[FUSION] Engine update failed: {e}")
+    def set_clutter_mode(self, enabled: bool, terrain_type: Optional[str] = None) -> None:
+        def apply(engine: SimulationEngine) -> None:
+            engine.clutter_enabled = enabled
+            if terrain_type is not None:
+                engine.terrain_type = terrain_type
 
-    # Clutter, MTI, and ECCM controls
+        self.submit(apply)
 
-    def set_clutter_mode(self, enabled: bool, terrain_type: str = "rural"):
-        """
-        Set environmental clutter mode.
+    def set_mti_mode(self, enabled: bool, threshold_mps: float = 15.0) -> None:
+        def apply(engine: SimulationEngine) -> None:
+            engine.mti_enabled = enabled
+            engine.mti_threshold_mps = threshold_mps
 
-        Args:
-            enabled: Whether clutter is active
-            terrain_type: Terrain type for clutter calculation
-        """
-        try:
-            self.engine.clutter_enabled = enabled
-            self.engine.terrain_type = terrain_type
+        self.submit(apply)
 
-            if enabled:
-                print(f"[CLUTTER] Mode ACTIVATED | Terrain: {terrain_type}")
-            else:
-                print("[CLUTTER] Mode DEACTIVATED")
-        except Exception as e:
-            print(f"[CLUTTER] Engine update failed: {e}")
+    def set_eccm_agility(self, enabled: bool) -> None:
+        self.submit(lambda engine: setattr(engine, "frequency_agility_enabled", enabled))
 
-    def set_mti_mode(self, enabled: bool, threshold_mps: float = 15.0):
-        """
-        Set MTI (Moving Target Indication) filter mode.
-
-        Args:
-            enabled: Whether MTI filter is active
-            threshold_mps: Velocity threshold below which targets are rejected [m/s]
-        """
-        try:
-            self.engine.mti_enabled = enabled
-            self.engine.mti_threshold_mps = threshold_mps
-
-            if enabled:
-                print(f"[MTI] Filter ACTIVATED | Threshold: {threshold_mps} m/s")
-            else:
-                print("[MTI] Filter DEACTIVATED")
-        except Exception as e:
-            print(f"[MTI] Engine update failed: {e}")
-
-    def set_eccm_agility(self, enabled: bool):
-        """
-        Set ECCM Frequency Agility mode.
-
-        Frequency agility hops the radar frequency to defeat spot jammers.
-
-        Args:
-            enabled: Whether frequency agility is active
-        """
-        try:
-            self.engine.frequency_agility_enabled = enabled
-
-            if enabled:
-                print("[ECCM] Frequency Agility ACTIVATED")
-            else:
-                print("[ECCM] Frequency Agility DEACTIVATED")
-        except Exception as e:
-            print(f"[ECCM] Engine update failed: {e}")
-
-    # Monopulse tracking
-
-    def set_monopulse_mode(self, enabled: bool):
-        """
-        Set Monopulse angle tracking mode.
-
-        Monopulse provides sub-beamwidth angular accuracy using
-        Sum/Difference pattern processing.
-
-        Args:
-            enabled: Whether monopulse tracking is active
-        """
-        try:
-            self.engine.monopulse_enabled = enabled
-
-            if enabled:
-                print("[MONOPULSE] Precision tracking ACTIVATED")
-            else:
-                print("[MONOPULSE] Standard beam tracking")
-        except Exception as e:
-            print(f"[MONOPULSE] Engine update failed: {e}")
-
-    # Pulse-Doppler processing
+    def set_monopulse_mode(self, enabled: bool) -> None:
+        self.submit(lambda engine: setattr(engine, "monopulse_enabled", enabled))
 
     def set_pulse_doppler_mode(
         self,
@@ -546,129 +457,41 @@ class SimulationThread(QThread):
         n_pulses: int = 64,
         prf_hz: float = 1000.0,
         mti_order: int = 0,
-    ):
-        """
-        Set pulse-Doppler processing mode.
+    ) -> None:
+        """Toggle coherent CPI processing (Richards 2005, Ch. 17)."""
+        self.submit(
+            lambda engine: engine.set_pulse_doppler_mode(
+                enabled, n_pulses, prf_hz, mti_order
+            )
+        )
 
-        Enables signal-level coherent processing with true Range-Doppler
-        map generation via CPI → Matched Filter → MTI → Doppler FFT.
+    def set_ekf_mode(self, enabled: bool) -> None:
+        """Switch the tracker between EKF (polar) and linear KF (Bar-Shalom 2001, 5.3)."""
 
-        Args:
-            enabled: Whether pulse-Doppler processing is active
-            n_pulses: Pulses per CPI
-            prf_hz: Pulse repetition frequency [Hz]
-            mti_order: MTI canceller order (0=off, 1=2-pulse, 2=3-pulse)
+        def apply(engine: SimulationEngine) -> None:
+            if engine.track_manager is not None:
+                engine.track_manager.set_ekf_mode(enabled)
 
-        Reference: Richards (2005), "Fundamentals of Radar Signal Processing"
-        """
-        try:
-            self.engine.set_pulse_doppler_mode(enabled, n_pulses, prf_hz, mti_order)
-
-            if enabled:
-                print(
-                    f"[PD] Pulse-Doppler ACTIVATED | N={n_pulses} PRF={prf_hz}Hz MTI={mti_order}"
-                )
-            else:
-                print("[PD] Pulse-Doppler DEACTIVATED → Parametric mode")
-        except Exception as e:
-            print(f"[PD] Engine update failed: {e}")
-
-    # EKF tracking
-
-    def set_ekf_mode(self, enabled: bool):
-        """
-        Set Extended Kalman Filter tracking mode.
-
-        When enabled, the tracker processes [r, θ] measurements directly
-        using the nonlinear EKF instead of the linear KF.
-
-        Args:
-            enabled: Whether to use EKF
-
-        Reference: Bar-Shalom (2001), Ch. 5.3
-        """
-        try:
-            if (
-                hasattr(self.engine, "track_manager")
-                and self.engine.track_manager is not None
-            ):
-                self.engine.track_manager.set_ekf_mode(enabled)
-                if enabled:
-                    print("[EKF] Extended Kalman Filter ACTIVATED (polar measurements)")
-                else:
-                    print("[EKF] Linear Kalman Filter (Cartesian measurements)")
-            else:
-                print("[EKF] Track manager not available")
-        except Exception as e:
-            print(f"[EKF] Engine update failed: {e}")
-
-    # Electronic-warfare controls
-
-    def __init_eccm(self):
-        """Lazy-initialize ECCM controller."""
-        if not hasattr(self, "_eccm_controller"):
-            try:
-                from src.advanced.eccm import ECCMController
-
-                self._eccm_controller = ECCMController(
-                    center_freq_hz=getattr(self.engine, "frequency_hz", 10e9),
-                    nominal_prf_hz=getattr(self.engine, "prf_hz", 1000.0),
-                )
-            except ImportError:
-                self._eccm_controller = None
-
-    def _get_eccm_state(self) -> dict:
-        """Get ECCM state for UI."""
-        if hasattr(self, "_eccm_controller") and self._eccm_controller is not None:
-            return self._eccm_controller.get_status()
-        return {"jamming_active": False, "effective_jsr_db": -100}
+        self.submit(apply)
 
     def set_jamming_environment(self, enabled: bool) -> None:
-        """
-        Toggle jamming environment.
-
-        Args:
-            enabled: True to activate jamming
-        """
-        self.__init_eccm()
-        if self._eccm_controller:
-            self._eccm_controller.set_jamming_environment(enabled, jsr_db=20.0)
-            state = "ACTIVE (20 dB J/S)" if enabled else "OFF"
-            print(f"[EW] Jamming environment {state}")
+        self.submit(
+            lambda _engine: self.eccm_controller.set_jamming_environment(
+                enabled, jsr_db=20.0
+            )
+        )
 
     def set_freq_agility(self, enabled: bool) -> None:
-        """
-        Toggle frequency agility ECCM.
-
-        Args:
-            enabled: True to enable
-        """
-        self.__init_eccm()
-        if self._eccm_controller:
-            if enabled:
-                self._eccm_controller.enable_frequency_agility()
-                print(
-                    f"[ECCM] Frequency Agility ON — J/S reduced by {self._eccm_controller.freq_agility.js_reduction_db:.0f} dB"
-                )
-            else:
-                self._eccm_controller.disable_frequency_agility()
-                print("[ECCM] Frequency Agility OFF")
+        if enabled:
+            self.submit(lambda _engine: self.eccm_controller.enable_frequency_agility())
+        else:
+            self.submit(lambda _engine: self.eccm_controller.disable_frequency_agility())
 
     def set_prf_stagger(self, enabled: bool) -> None:
-        """
-        Toggle PRF stagger ECCM.
-
-        Args:
-            enabled: True to enable
-        """
-        self.__init_eccm()
-        if self._eccm_controller:
-            if enabled:
-                self._eccm_controller.enable_prf_stagger()
-                print("[ECCM] PRF Stagger ON — ±5% jitter")
-            else:
-                self._eccm_controller.disable_prf_stagger()
-                print("[ECCM] PRF Stagger OFF")
+        if enabled:
+            self.submit(lambda _engine: self.eccm_controller.enable_prf_stagger())
+        else:
+            self.submit(lambda _engine: self.eccm_controller.disable_prf_stagger())
 
 
 def create_demo_scenario() -> SimulationEngine:
