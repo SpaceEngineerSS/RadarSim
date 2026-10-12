@@ -75,9 +75,8 @@ def test_simulated_time_follows_wall_clock_in_fixed_steps(application, running):
     elapsed = thread.call_sync(lambda e: e.current_time) - start
     assert 0.7 < elapsed < 1.3
     dt = thread.engine.dt
-    assert thread.call_sync(lambda e: e.current_time) / dt == pytest.approx(
-        round(thread.call_sync(lambda e: e.current_time) / dt), abs=1e-6
-    )
+    steps = thread.call_sync(lambda e: e.current_time) / dt
+    assert steps == pytest.approx(round(steps), abs=1e-6)
 
 
 def test_pause_freezes_and_step_advances_one_step(application, running):

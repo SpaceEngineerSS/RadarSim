@@ -205,7 +205,7 @@ class SwerlingRCS:
             # Pulse-to-pulse decorrelation
             if n_pulses > 1:
                 samples = rng.exponential(mean_rcs, n_pulses)
-                return np.mean(samples)
+                return float(np.mean(samples))
             return rng.exponential(mean_rcs)
 
         elif model == SwerlingModel.SWERLING_3:
@@ -218,7 +218,7 @@ class SwerlingRCS:
             # Fast fluctuation, Chi-squared 4 DoF
             if n_pulses > 1:
                 samples = rng.gamma(2, mean_rcs / 2, n_pulses)
-                return np.mean(samples)
+                return float(np.mean(samples))
             return rng.gamma(2, mean_rcs / 2)
 
         return mean_rcs

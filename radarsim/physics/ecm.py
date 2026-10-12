@@ -176,8 +176,8 @@ class ECMSimulator:
         Returns:
             JSR in dB
         """
-        jammer_range = np.linalg.norm(jammer_pos - radar_pos)
-        target_range = np.linalg.norm(target_pos - radar_pos)
+        jammer_range = float(np.linalg.norm(jammer_pos - radar_pos))
+        target_range = float(np.linalg.norm(target_pos - radar_pos))
 
         if min(radar_power, radar_gain, jammer_power, target_rcs) <= 0.0:
             raise ValueError("powers, radar gain, and target RCS must be positive")
