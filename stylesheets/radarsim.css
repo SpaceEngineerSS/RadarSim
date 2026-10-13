@@ -1,0 +1,30 @@
+/* RadarSim documentation theme: the same palette as the desktop interface. */
+:root, [data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1c2126;
+  --md-primary-fg-color--light: #2a2f35;
+  --md-primary-fg-color--dark: #111315;
+  --md-primary-bg-color: #f7f8f9;
+  --md-accent-fg-color: #b97812;
+  --md-typeset-a-color: #9a6510;
+  --md-default-bg-color: #f7f8f9;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #171a1d;
+  --md-primary-fg-color--dark: #111315;
+  --md-primary-bg-color: #d5d9dd;
+  --md-accent-fg-color: #e0a23a;
+  --md-typeset-a-color: #e0a23a;
+  --md-default-bg-color: #111315;
+  --md-default-fg-color: #d5d9dd;
+  --md-default-fg-color--light: #8a929a;
+  --md-code-bg-color: #171a1d;
+  --md-footer-bg-color: #171a1d;
+}
+.md-header, .md-tabs { box-shadow: none; border-bottom: 1px solid #2a2f35; }
+.md-typeset h1 { font-weight: 600; letter-spacing: -0.01em; }
+.md-typeset h2 { font-weight: 600; margin-top: 2em; }
+.md-typeset img { border-radius: 4px; border: 1px solid rgba(128, 128, 128, 0.25); }
+.md-typeset table:not([class]) { font-size: 0.72rem; }
+.md-typeset table:not([class]) th { font-weight: 600; }
+.md-typeset code { font-size: 0.82em; }
+.md-typeset .admonition, .md-typeset details { box-shadow: none; border-width: 0 0 0 2px; }
