@@ -52,7 +52,7 @@ docs = [
     "mkdocs-material>=9.5,<10",
     "matplotlib>=3.7",
 ]
-build = ["pyinstaller>=6.10"]
+build = ["pyinstaller>=6.10", "pillow>=10"]  # Pillow converts the icon to .icns on macOS
 all = ["radarsim[gui,dev,docs]"]
 
 [project.urls]
